@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.db
+out/
+.streamlit/secrets.toml
+.playwright-mcp/
+.gide/
+data/flux_memory_graph.json

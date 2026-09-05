@@ -1,0 +1,17 @@
+FABRIKAM FACILITIES
+17 Depot Ave, Trenton NJ 08611
+Tax ID: 31-2223344
+
+INVOICE
+
+Invoice Number: INV-4102
+Invoice Date: 2026-09-01
+Due Date: 2026-10-01
+
+SKU        Description                  Qty   Unit Price     Amount
+HVAC-EM    Emergency HVAC repair          1      1875.00     1875.00
+PARTS      Compressor parts               1       640.00      640.00
+
+Subtotal: 2515.00
+Tax: 0.00
+Total Due: USD 2515.00

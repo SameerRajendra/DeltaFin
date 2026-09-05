@@ -1,0 +1,10 @@
+period,account_code,account_name,account_type,amount
+2025-10,4000,Enterprise Revenue,revenue,337690.74
+2025-10,4010,Mid-Market Revenue,revenue,158010.73
+2025-10,4020,SMB Revenue,revenue,82223.31
+2025-10,5000,Hosting COGS,cogs,38684.87
+2025-10,6000,Sales & Marketing,opex,72002.63
+2025-10,6010,G&A,opex,48330.52
+2025-10,6020,R&D,opex,102307.75
+2025-10,6100,Travel,opex,14446.71
+2025-10,7000,Insurance,other,5000.0

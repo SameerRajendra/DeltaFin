@@ -1,0 +1,10 @@
+period,account_code,account_name,account_type,amount
+2026-06,4000,Enterprise Revenue,revenue,371494.33
+2026-06,4010,Mid-Market Revenue,revenue,123190.98
+2026-06,4020,SMB Revenue,revenue,83305.96
+2026-06,5000,Hosting COGS,cogs,49467.62
+2026-06,6000,Sales & Marketing,opex,70907.21
+2026-06,6010,G&A,opex,51097.07
+2026-06,6020,R&D,opex,108838.6
+2026-06,6100,Travel,opex,15070.52
+2026-06,7000,Insurance,other,5000.0

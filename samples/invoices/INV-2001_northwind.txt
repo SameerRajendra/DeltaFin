@@ -1,0 +1,19 @@
+NORTHWIND LOGISTICS
+88 Harbor Way, Elizabeth NJ 07201
+Tax ID: 45-9988776
+
+INVOICE
+
+Invoice Number: INV-2001
+Invoice Date: 2026-08-29
+Due Date: 2026-10-13
+PO Number: PO-5002
+
+SKU        Description                  Qty   Unit Price     Amount
+FRT-LTL    LTL freight lanes (August)     1      4200.00     4200.00
+FUEL       Fuel surcharge                 1       610.00      610.00
+DET        Detention charges              4        95.00      380.00
+
+Subtotal: 5190.00
+Tax: 0.00
+Total Due: USD 5190.00

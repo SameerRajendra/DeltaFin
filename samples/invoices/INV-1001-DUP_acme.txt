@@ -1,0 +1,19 @@
+ACME INDUSTRIAL SUPPLY
+123 Foundry Rd, Newark NJ 07102
+Tax ID: 22-1234567
+
+INVOICE
+
+Invoice Number: INV-1001
+Invoice Date: 2026-08-27
+Due Date: 2026-09-26
+PO Number: PO-5001
+
+SKU        Description                  Qty   Unit Price     Amount
+BLT-08     Hex bolts M8 (case)           40        18.50      740.00
+WSH-08     Washers M8 (case)             20         6.25      125.00
+FRT        Freight                        1        85.00       85.00
+
+Subtotal: 950.00
+Tax: 0.00
+Total Due: USD 950.00

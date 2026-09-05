@@ -1,0 +1,19 @@
+txn_id,period,txn_date,account_code,entity,department,region,segment,customer_id,customer_name,vendor,amount,memo
+TXN-2025-05-0001,2025-05,2025-05-10,4000,Money Ops US,Sales,AMER,Enterprise,ENT-01,Globex Corp,,59635.74,Subscription revenue
+TXN-2025-05-0002,2025-05,2025-05-10,4000,Money Ops US,Sales,AMER,Enterprise,ENT-02,Initech Holdings,,73186.73,Subscription revenue
+TXN-2025-05-0003,2025-05,2025-05-10,4000,Money Ops US,Sales,EMEA,Enterprise,ENT-03,Umbrella Group,,69193.41,Subscription revenue
+TXN-2025-05-0004,2025-05,2025-05-10,4000,Money Ops US,Sales,AMER,Enterprise,ENT-04,Stark Industries,,67891.98,Subscription revenue
+TXN-2025-05-0005,2025-05,2025-05-10,4000,Money Ops US,Sales,AMER,Enterprise,ENT-05,Wayne Enterprises,,66887.05,Subscription revenue
+TXN-2025-05-0006,2025-05,2025-05-12,4010,Money Ops US,Sales,AMER,Mid-Market,MID-01,Acme Mid,,31071.56,Subscription revenue
+TXN-2025-05-0007,2025-05,2025-05-12,4010,Money Ops US,Sales,AMER,Mid-Market,MID-02,Northwind Mid,,32332.02,Subscription revenue
+TXN-2025-05-0008,2025-05,2025-05-12,4010,Money Ops US,Sales,EMEA,Mid-Market,MID-03,Contoso Mid,,28175.8,Subscription revenue
+TXN-2025-05-0009,2025-05,2025-05-12,4010,Money Ops US,Sales,AMER,Mid-Market,MID-04,Fabrikam Mid,,34615.19,Subscription revenue
+TXN-2025-05-0010,2025-05,2025-05-12,4010,Money Ops US,Sales,EMEA,Mid-Market,MID-05,Soylent Mid,,28455.75,Subscription revenue
+TXN-2025-05-0011,2025-05,2025-05-14,4020,Money Ops US,Sales,AMER,SMB,SMB-POOL,SMB Pool (US),,56558.68,Subscription revenue - SMB pool
+TXN-2025-05-0012,2025-05,2025-05-14,4020,Money Ops EU,Sales,EMEA,SMB,SMB-POOL,SMB Pool (EU),,23897.09,Subscription revenue - SMB pool
+TXN-2025-05-0013,2025-05,2025-05-05,5000,Money Ops US,Engineering,AMER,,,,NimbusHost Cloud,37846.66,Production hosting - base usage
+TXN-2025-05-0014,2025-05,2025-05-08,6000,Money Ops US,Sales & Marketing,AMER,,,,Ad Platform Co,47537.95,Digital advertising spend
+TXN-2025-05-0015,2025-05,2025-05-16,6000,Money Ops US,Sales & Marketing,AMER,,,,Field Events LLC,21936.23,Regional field events
+TXN-2025-05-0016,2025-05,2025-05-09,6010,Money Ops US,G&A,AMER,,,,Corporate Services Inc,49702.94,Corporate overhead allocation
+TXN-2025-05-0017,2025-05,2025-05-01,6020,Money Ops US,R&D,AMER,,,,Internal Payroll Allocation,95931.95,Engineering payroll allocation
+TXN-2025-05-0018,2025-05,2025-05-18,6100,Money Ops US,Sales,AMER,,,,Corporate Travel Partners,14598.15,T&E - travel partners
