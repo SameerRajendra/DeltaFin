@@ -397,14 +397,23 @@ modal deploy modal_app/streamlit_host.py
 
 It bakes the **current local `data/` and `out/` into the image at deploy
 time** (`Image.add_local_dir(..., copy=True)`) rather than running the
-pipelines live — deliberately, for two reasons: a public endpoint with no
-login has no business holding `PRISMTRACE_API_KEY` / `MODAL_KEY` /
-`ANTHROPIC_API_KEY` (`.env` is excluded from the image outright), and a
-snapshot means the page has real content the instant it's opened instead of
-depending on a cold LLM call succeeding for a first-time visitor. The
-tradeoff: it's a snapshot, not a live view — approve/reject clicks write to
-that container's own copy of the ledger, and new invoice or period runs don't
-appear there until the next `modal deploy`.
+pipelines live — deliberately, so the page has real content the instant it's
+opened instead of depending on a cold LLM call succeeding for a first-time
+visitor. The tradeoff: it's a snapshot, not a live view — approve/reject
+clicks write to that container's own copy of the ledger, and new invoice or
+period runs don't appear there until the next `modal deploy`.
+
+The one thing that *does* run live is the AP inbox's invoice-upload panel,
+via a real Qwen extraction call. `.env` itself is still excluded from the
+image outright (a public endpoint has no business holding the full file), but
+a narrower, purpose-made Modal secret (`deltafin-hosted-llm`) injects just
+`MODAL_QWEN_URL` / `MODAL_KEY` / `MODAL_SECRET` plus the three `PRISMTRACE_*`
+values — enough for `app/llm.py`'s Qwen path and its trace to work, nothing
+else. `ANTHROPIC_API_KEY` and `TAVILY_API_KEY` are deliberately not in that
+secret: Qwen takes priority whenever it's configured, so Anthropic credentials
+would sit unused, and Tavily isn't on this code path at all. The honest
+tradeoff here is different from the snapshot one above — it's a real, if
+scoped, credential-exposure surface on an unauthenticated public endpoint.
 
 ---
 

@@ -2,7 +2,15 @@
 open a real URL instead of localhost, which only ever works on this machine.
 
 Deploy:
-    modal deploy modal_app/streamlit_host.py
+    1. One-time: create a Modal secret holding exactly the credentials this
+       container is allowed to hold (copy the values from your local .env):
+
+           modal secret create deltafin-hosted-llm \
+               MODAL_QWEN_URL=... MODAL_KEY=... MODAL_SECRET=... \
+               PRISMTRACE_API_KEY=... PRISMTRACE_PROJECT_ID=... \
+               PRISMTRACE_HOST=...
+
+    2. modal deploy modal_app/streamlit_host.py
 
 Prints a https://...modal.run URL. No login, no proxy auth -- anyone with the
 link can open it.
@@ -13,21 +21,41 @@ deploy time so the page has real content the instant it's opened. Re-run
 `python run_flux.py`) to push updated content -- this does not regenerate
 data on its own, it only serves what's on disk right now.
 
-The AP inbox's "Upload a new invoice" panel *does* run the real
-process_invoice LangGraph live against whatever gets uploaded (extraction,
-matching, controls, workpaper) -- but always via the deterministic
-parser/template path, never an LLM: .env is deliberately excluded from the
-image (see `_ignore` below), so ANTHROPIC_API_KEY / MODAL_QWEN_URL are unset
-here and app/llm.py's get_llm() returns None. A public, unauthenticated
-endpoint has no business holding those credentials.
+The AP inbox's "Upload a new invoice" panel runs the real process_invoice
+LangGraph live against whatever gets uploaded (extraction, matching, controls,
+workpaper) -- now via the real Qwen extraction path, not the deterministic
+fallback: the `deltafin-hosted-llm` secret above injects MODAL_QWEN_URL /
+MODAL_KEY / MODAL_SECRET as env vars, so app/llm.py's get_llm() picks up Qwen
+exactly as it does locally (same "Modal-hosted, scale-to-zero" endpoint,
+cold-start included). PRISM credentials ride along in the same secret so this
+now-live model call gets traced like every other entry point, per this
+project's standing tracing rule (see CLAUDE.md) -- without it, this would be
+an unwired LLM call, invisible on the dashboard.
 
-Dependencies are the subset of requirements.txt the UI + AP graph actually
-import: langgraph (app/graph.py, module-level import regardless of whether an
-LLM is configured), openpyxl (workpaper generation), pypdf (.pdf uploads).
-Not included: duckdb/modal/langchain-anthropic/langchain-openai -- nothing on
-this page's code path needs them (the flux view only reads pre-generated
-files, never queries DuckDB live; get_llm() short-circuits before importing
-any LLM client).
+Deliberately still NOT in that secret: ANTHROPIC_API_KEY (get_llm() prefers
+Qwen whenever MODAL_QWEN_URL is set, so Anthropic would be unreachable dead
+weight here) and TAVILY_API_KEY (unused on this code path). .env itself stays
+fully excluded from the image (see `_ignore` below) -- only the four
+Qwen-calling values and the three PRISM values are ever present in this
+container, as a named Modal secret, never as a baked-in file or a value
+committed to source.
+
+Real tradeoff, stated plainly: this is a public, unauthenticated endpoint that
+now holds live credentials capable of calling a real, billed GPU endpoint.
+Nothing in this app's code echoes env vars back to a visitor, but anyone who
+got shell access to the running container would have working Qwen-calling
+credentials. Treat `deltafin-hosted-llm` as scoped-but-not-nothing: it's a
+narrower blast radius than the full .env, not a zero one. Rotate it if this
+endpoint is ever taken down for good, and don't reuse the same secret name
+for anything holding higher-value credentials later.
+
+Dependencies are the subset of requirements.txt this page's live code paths
+need: langgraph (app/graph.py), openpyxl (workpaper generation), pypdf (.pdf
+uploads), langchain-openai (Qwen's OpenAI-compatible client, app/llm.py),
+prismtrace-sdk (tracing). Not included: duckdb/langchain-anthropic -- nothing
+on this code path needs them (the flux view only reads pre-generated files,
+never queries DuckDB live; get_llm() never reaches the Anthropic branch while
+MODAL_QWEN_URL is set).
 """
 
 import modal
@@ -50,12 +78,16 @@ image = (
         "langgraph>=0.2",
         "openpyxl>=3.1",
         "pypdf>=5.0",
+        "langchain-openai>=0.2",
+        "prismtrace-sdk>=0.4.2",
     )
     .add_local_dir(".", remote_path="/root/app", copy=True, ignore=_ignore)
 )
 
+llm_secret = modal.Secret.from_name("deltafin-hosted-llm")
 
-@app.function(image=image, scaledown_window=300)
+
+@app.function(image=image, secrets=[llm_secret], scaledown_window=300)
 @modal.web_server(port=8501, startup_timeout=60)
 def serve():
     import subprocess
