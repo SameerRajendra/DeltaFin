@@ -1,0 +1,97 @@
+{
+  "_comment": "EXCERPT -- 4 of 31 edges from data/flux_memory_graph.json after a full `python run_flux.py --replay` over the 20-month synthetic dataset. Trimmed by hand for the repo; the live file is gitignored and rebuilt by any run. Edge keys are `account_code::driver_key`; `periods` is every period in which that driver appeared in a material finding for that account. See examples/README.md.",
+  "edges": {
+    "5000::CloudBeam Compute": {
+      "account_code": "5000",
+      "driver_key": "CloudBeam Compute",
+      "driver_name": "CloudBeam Compute",
+      "periods": {
+        "2026-06": {
+          "delta": 8000.0,
+          "share": 1.0209
+        },
+        "2026-08": {
+          "delta": 4000.0,
+          "share": 0.743
+        }
+      }
+    },
+    "5000::NimbusHost Cloud": {
+      "account_code": "5000",
+      "driver_key": "NimbusHost Cloud",
+      "driver_name": "NimbusHost Cloud",
+      "periods": {
+        "2025-05": {
+          "delta": -284.11,
+          "share": 1.0
+        },
+        "2025-12": {
+          "delta": 1470.25,
+          "share": 1.0
+        },
+        "2026-01": {
+          "delta": -1879.74,
+          "share": 1.0
+        },
+        "2026-02": {
+          "delta": 2045.66,
+          "share": 1.0
+        },
+        "2026-06": {
+          "delta": -163.42,
+          "share": -0.0209
+        },
+        "2026-08": {
+          "delta": 1383.64,
+          "share": 0.257
+        }
+      }
+    },
+    "6000::TechConf Expo": {
+      "account_code": "6000",
+      "driver_key": "TechConf Expo",
+      "driver_name": "TechConf Expo",
+      "periods": {
+        "2025-08": {
+          "delta": 25000.0,
+          "share": 0.9328
+        },
+        "2025-09": {
+          "delta": -25000.0,
+          "share": 0.9259
+        },
+        "2026-08": {
+          "delta": 25000.0,
+          "share": 0.9074
+        }
+      }
+    },
+    "4000::ENT-01": {
+      "account_code": "4000",
+      "driver_key": "ENT-01",
+      "driver_name": "Globex Corp",
+      "periods": {
+        "2025-05": {
+          "delta": -4661.14,
+          "share": 0.3391
+        },
+        "2025-10": {
+          "delta": -4769.19,
+          "share": 0.3111
+        },
+        "2025-11": {
+          "delta": 3022.27,
+          "share": 0.1639
+        },
+        "2026-07": {
+          "delta": 1405.06,
+          "share": -0.0197
+        },
+        "2026-08": {
+          "delta": 30000.0,
+          "share": 0.3125
+        }
+      }
+    }
+  }
+}

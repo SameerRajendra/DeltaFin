@@ -1,4 +1,5 @@
-.env
+.env*
+!.env.example
 __pycache__/
 *.py[cod]
 .venv/
@@ -10,3 +11,6 @@ out/
 .gide/
 data/flux_memory_graph.json
 data/uploads/
+
+# NB: examples/ is deliberately NOT ignored -- it holds committed copies of
+# artifacts that out/ would otherwise hide. See examples/README.md.

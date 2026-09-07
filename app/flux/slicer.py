@@ -34,9 +34,17 @@ def slice_drivers(conn, account_code: str, current_period: str, prior_period: st
         return {"available": False, "reason": "no dimensional detail modeled for this account"}
     key_col, name_col = dims
 
+    # COALESCE, not a NULL filter: a subledger row with no customer/vendor on it
+    # is still real money moving through the account. Dropping those rows would
+    # leave the driver shares silently failing to sum to the account delta;
+    # bucketing them keeps the arithmetic honest and makes the gap visible.
+    # It also keeps the memory-graph key stable -- an un-coalesced NULL becomes
+    # an edge literally keyed `<account>::None` that occupies a MAX_DRIVERS slot
+    # and carries a concentration share forever.
     rows = conn.execute(
         f"""
-        SELECT {key_col} AS member_key, ANY_VALUE({name_col}) AS member_name,
+        SELECT COALESCE(CAST({key_col} AS VARCHAR), '(unattributed)') AS member_key,
+               ANY_VALUE({name_col}) AS member_name,
                SUM(CASE WHEN period = ? THEN amount ELSE 0 END) AS current_amt,
                SUM(CASE WHEN period = ? THEN amount ELSE 0 END) AS prior_amt
         FROM txn

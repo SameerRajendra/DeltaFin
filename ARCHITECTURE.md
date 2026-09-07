@@ -1,16 +1,42 @@
 # What this is and how it's built
 
-An agentic accounts-payable reconciliation system. You hand it an invoice
-document; it extracts the fields, matches them three ways against an ERP, a bank
-feed, and a vendor master, runs AP control rules over the result, writes an
-audit-ready Excel workpaper, and puts the whole thing in front of a human to
-approve or reject.
+Two agentic finance pipelines that share one shape: a deterministic core does
+every calculation, an LLM narrates what the core computed, and a human decides.
+
+The one this repo leads with is a **variance-explanation agent** ("flux",
+`app/flux/`). Monthly account summaries and transaction-level detail go in; a
+prioritized, owned brief comes out explaining what changed month over month,
+who drove it, and what to do about it — carrying institutional memory across
+runs, so a driver that has fired before reads as recurring rather than as a
+fresh surprise.
+
+The second applies the same shape to **accounts-payable reconciliation**. You
+hand it an invoice document; it extracts the fields, matches them three ways
+against an ERP, a bank feed, and a vendor master, runs AP control rules over
+the result, writes an audit-ready Excel workpaper, and puts the whole thing in
+front of a human to approve or reject.
 
 Built for the AI x Finance "Money Talks" hackathon, Money Operations track.
+
+Committed sample output for both pipelines is in `examples/`, so the artifacts
+can be read without running anything.
 
 ---
 
 ## 1. The problem
+
+### 1.1 Month-end close: explaining what moved
+
+A finance team closing the month has to explain every material swing in the
+P&L, and the explanation is only useful if it goes past the number. The target
+bar is going from *"Revenue increased 18%"* to *"Revenue increased 18%,
+primarily driven by a 32% increase in enterprise accounts, with three customers
+accounting for 64% of the increase"* — and doing it in a way that gets sharper
+the more months it's run against, not just once. Getting there means answering
+what changed, what's driving it, and why, over data that arrives as a summary
+at one grain and a subledger at another.
+
+### 1.2 Accounts payable: paying an invoice you haven't seen before
 
 Accounts payable is reconciliation work. A finance team receives an invoice and
 has to answer four questions before paying it:
@@ -32,230 +58,52 @@ agent's findings and a complete workpaper in front of them.
 
 ---
 
-## 2. What it does, concretely
+## 2. The variance-explanation agent ("flux")
 
-Given `samples/invoices/INV-2001_northwind.txt`:
-
-```
-NORTHWIND LOGISTICS
-Invoice Number: INV-2001
-PO Number: PO-5002
-...
-Total Due: USD 5190.00
-```
-
-The system produces:
-
-- **Structured fields** — vendor, invoice number, dates, PO reference, line items, total
-- **A three-way match grid** — invoice vs. purchase order vs. bank feed, attribute by attribute
-- **Control exceptions** — `[HIGH] amount_over_po: Invoice 5,190.00 exceeds PO 4,200.00 by 990.00 (tolerance 84.00)`
-- **A recommendation** — `HOLD` (never an action, only a recommendation)
-- **An audit workpaper** — `out/workpaper_INV-2001_38e95103.xlsx`, five sheets
-- **A review queue entry** — surfaced in the Streamlit approval inbox
-
----
-
-## 3. Architecture
+`app/flux/`, driven by `run_flux.py`. Not reconciling one invoice, but
+explaining a month-over-month change across a whole P&L against the bar set out
+in §1.1. It doesn't stop at the explanation either: every finding is turned
+into a prioritized, owned next step (§2.5), so the output reads as a task list a
+finance team can act on, not just a report they read and set aside.
 
 ```
-                      ┌─────────────────────────────────────────┐
-   invoice document   │           LangGraph  (app/graph.py)     │
-   (.txt / .pdf)  ───►│                                         │
-                      │  ingest_document                        │
-                      │        ↓                                │
-                      │  extract_fields ──────► LLM or parser   │
-                      │        ↓                                │
-                      │  match_records ───────► semantic layer  │
-                      │        ↓                    (SQLite)    │
-                      │  evaluate_controls ───► control rules   │
-                      │        ↓                                │
-                      │  draft_narrative ─────► LLM or template │
-                      │        ↓                                │
-                      │  compile_workpaper ───► openpyxl .xlsx  │
-                      │        ↓                                │
-                      │  queue_for_review ────► invoices table  │
-                      └─────────────────┬───────────────────────┘
-                                        │
-                                        ▼
-                        Streamlit approval inbox (human decides)
+  data/financials/            ┌──────────────────────────────────────────────┐
+    summaries/*.csv           │      LangGraph  (app/flux/graph.py)          │
+    transactions/*.csv  ─────►│                                              │
+                              │  ingest_periods ──────► DuckDB (ingest.py)   │
+                              │        ↓                 + subledger tie-out │
+                              │  compute_variances ────► variance.py         │
+                              │        ↓                 delta / % / z-score │
+                              │  rank_materiality ─────► materiality gate    │
+                              │        ↓                                     │
+                              │  slice_drivers ────────► slicer.py           │
+                              │        ↓                 cohorts + concentr. │
+                              │  recall_memory  ◄──────────────────┐         │
+                              │        ↓                           │         │
+                              │  explain_drivers ─────► LLM        │         │
+                              │        ↓                           │         │
+                              │  compile_action_plan ─► actions.py │         │
+                              │        ↓                           │         │
+                              │  synthesize_brief ────► LLM        │         │
+                              │        ↓                           │         │
+                              │  persist_memory ───────────────────┤         │
+                              │        ↓                           │         │
+                              │  render_artifacts ────► brief.py   │         │
+                              └─────────────────┬──────────────────┼─────────┘
+                                                │                  │
+                                                ▼                  ▼
+                                     out/flux/*.md, *.xlsx   institutional memory
+                                                             data/flux_memory_graph.json
+                                                             data/flux_memory.db
+                                                                   ▲
+                                                                   │ Confirm / Off-base
+                                                       Streamlit flux page (analyst)
 ```
 
-Seven nodes, linear, deterministic. No conditional edges and no agent loop —
-this is deliberate, see §8.
+Ten nodes, linear, no conditional edges. The LLM touches exactly two of them,
+and both have a deterministic fallback (§2.4).
 
----
-
-## 4. Components
-
-### 4.1 Financial semantic layer — `app/store.py`, `data/seed.py`
-
-A SQLite database standing in for the three systems a real finance team would
-query. Using one local store keeps the demo self-contained and reproducible.
-
-| Table | Stands in for | Contents |
-|---|---|---|
-| `vendors` | Vendor master / CRM | name, tax ID, payment terms, active status |
-| `purchase_orders` | ERP | PO number, vendor, amount, status, issue date |
-| `bank_transactions` | Bank feed | posted date, amount, counterparty, reference |
-| `invoices` | AP subledger | extracted fields, recommendation, narrative, workpaper path, status |
-| `invoice_exceptions` | — | one row per control failure, with severity |
-| `approvals` | Audit trail | who decided what, when, with what note |
-
-Lookups are intentionally forgiving in the way a real matcher must be:
-`find_vendor` falls back from exact name match to a prefix match;
-`find_bank_payment` matches on invoice reference first, then on amount.
-
-`python data/seed.py` drops and rebuilds the database with four vendors, four
-POs, and three settled bank transactions.
-
-### 4.2 Document extraction — `app/extraction.py`
-
-Turns document text into a structured invoice dict. Two paths:
-
-- **With a model configured (`MODAL_QWEN_URL`)** — the text goes to the model
-  with a prompt demanding a strict JSON object. The response is JSON-extracted
-  and parsed.
-- **Without one** — a deterministic regex parser pulls the same fields, and a
-  column-aware regex reads the line-item table.
-
-The LLM path degrades to the parser on any JSON failure, so extraction never
-hard-fails. The resulting dict carries `extraction_method` so the workpaper
-records how each field was obtained — an audit trail requirement, not a nicety.
-
-PDFs are read via `pypdf`; `.txt` is read directly.
-
-### 4.3 Control rules — `app/controls.py`
-
-Pure functions over `(extracted, vendor, po, bank_txn, prior_invoice)`. No model
-involvement — these are the checks that decide whether money moves, so they are
-ordinary deterministic code that can be read and audited.
-
-| Code | Severity | Fires when |
-|---|---|---|
-| `unknown_vendor` | critical | Payee absent from the vendor master |
-| `duplicate_invoice` | critical | Invoice number already processed |
-| `inactive_vendor` | high | Vendor exists but isn't active |
-| `missing_po` | high | No PO referenced — three-way match impossible |
-| `po_not_found` | high | PO referenced but absent from the ERP |
-| `amount_over_po` | high | Invoice exceeds PO beyond tolerance |
-| `unreadable_total` | high | No total could be extracted |
-| `po_closed` | medium | PO already closed |
-| `possible_prior_payment` | medium | Bank feed shows a matching settlement |
-| `invalid_dates` | medium | Due date precedes invoice date |
-| `terms_mismatch` | low | Stated terms disagree with the vendor master |
-
-Tolerance is `max(2% of PO, $50.00)` (`app/config.py`), so small invoices aren't
-flagged over rounding and large ones aren't waved through on a percentage.
-
-The recommendation is a pure function of the worst severity present:
-critical/high → `hold`, medium → `review`, otherwise → `approve`.
-
-### 4.4 Audit workpaper — `app/workpaper.py`
-
-An `openpyxl` workbook, one per invoice, with five sheets:
-
-1. **Summary** — preparer, run ID, source document, extraction method, the key fields, exception count, recommendation, and the narrative
-2. **Three-Way Match** — attribute grid across invoice / PO / bank with an "Agrees?" column
-3. **Exceptions** — every exception, severity-shaded (red → green)
-4. **Line Items** — the parsed invoice table
-5. **Source Document** — the original text, verbatim, as evidence
-
-The point is that a reviewer can hand this file to an auditor without rebuilding
-the reasoning: findings and the underlying evidence live in one artifact.
-
-### 4.5 Orchestration — `app/graph.py`
-
-A LangGraph `StateGraph` over a `ReconState` TypedDict. Each node returns a
-partial state update:
-
-| Node | Reads | Writes |
-|---|---|---|
-| `ingest_document` | `source_file` | `raw_text` |
-| `extract_fields` | `raw_text` | `extracted` |
-| `match_records` | `extracted` | `vendor`, `po`, `bank_txn`, `prior_invoice` |
-| `evaluate_controls` | all matches | `exceptions`, `recommendation` |
-| `draft_narrative` | findings | `narrative` |
-| `compile_workpaper` | everything | `workpaper_path` |
-| `queue_for_review` | everything | `invoice_id` |
-
-`process_invoice(source_file)` is the single entry point: it mints a run ID,
-builds the graph, and invokes it. Both the CLI and the UI go through it, so
-there is exactly one path.
-
-### 4.6 Review UI — `ui/streamlit_app.py`
-
-The human-in-the-loop surface, and the reason the agent's output is a
-*recommendation*:
-
-- Sidebar queue filtered by status, with a count
-- Three-way match rendered as an attribute table with an explicit `OK` / `MISMATCH` column
-- Invoice / PO / variance metrics
-- Exceptions as severity-coloured cards
-- The auditor narrative
-- One-click workpaper download
-- Approve / reject with a reviewer note, written to `approvals` as an audit trail
-
----
-
-## 5. Running it
-
-```bash
-pip install -r requirements.txt
-cp .env.example .env          # MODAL_QWEN_URL optional; unset runs deterministic
-python data/seed.py           # build the ledger
-python run_demo.py            # process all sample invoices
-streamlit run ui/streamlit_app.py
-```
-
----
-
-## 6. The demo cases
-
-The five sample invoices are built to trip a different control each:
-
-| Invoice | Scenario | Verdict |
-|---|---|---|
-| INV-1001 | Clean match, but the bank feed shows it settled | REVIEW — possible prior payment |
-| INV-2001 | Freight surcharges push it 990.00 over PO-5002 | HOLD — amount over PO |
-| INV-1001 (dup) | Same invoice number resubmitted weeks later | HOLD — duplicate invoice |
-| INV-7788 | Globex: not in the vendor master, PO doesn't exist | HOLD — unknown vendor |
-| INV-4102 | Emergency HVAC repair, no PO raised | HOLD — three-way match impossible |
-
-Order matters for the duplicate case: `run_demo.py` fixes the sequence so the
-original is processed before its duplicate.
-
----
-
-## 7. Design decisions
-
-**The model doesn't decide payments.** Extraction and narrative use the LLM;
-matching and control evaluation are deterministic code. Anything that determines
-whether money moves is auditable and reproducible.
-
-**It runs without a model configured.** No `MODAL_QWEN_URL` and the pipeline
-still completes via the regex parser and a templated narrative. A demo that
-depends on a live provider is a demo that can fail in front of judges.
-Configuring Qwen upgrades extraction quality; it is never load-bearing.
-
-**The workpaper carries its own evidence.** The source text ships inside the
-workbook, so findings can be checked without going back to the system.
-
----
-
-## 8. The variance-explanation agent ("flux")
-
-A second, independent pipeline (`app/flux/`, `run_flux.py`) built for the same
-"AI-native finance team" brief but for a different job: not reconciling one
-invoice, but explaining a month-over-month change across a whole P&L. The
-target bar is going from *"Revenue increased 18%"* to *"Revenue increased 18%,
-primarily driven by a 32% increase in enterprise accounts, with three
-customers accounting for 64% of the increase"* — and doing it in a way that
-gets sharper the more months it's run against, not just once. It doesn't stop
-at the explanation either: every finding is turned into a prioritized, owned
-next step (§8.5), so the output reads as a task list a finance team can act
-on, not just a report they read and set aside.
-
-### 8.1 What changed / why / what's driving it
+### 2.1 What changed / why / what's driving it
 
 Three questions, three stages of the graph:
 
@@ -263,10 +111,10 @@ Three questions, three stages of the graph:
 |---|---|---|
 | **What changed?** | `compute_variances`, `rank_materiality` | Delta, %, and a z-score against a 6-month trailing baseline per account; ranked by a materiality gate (`app/config.py`: `$25k` absolute, `10%` with a `$5k` floor, or a `2.0` z-score anomaly) |
 | **What's driving it?** | `slice_drivers` | The account's subledger is grouped by customer (revenue) or vendor (cost), each member classified `new` / `churned` / `expansion` / `contraction`, ranked by contribution, with a cumulative-share concentration stat (`app/flux/graph.py: _concentration_note`) — the "3 customers account for 64%" figure |
-| **Why did it change?** | `recall_memory`, `explain_drivers` | Institutional memory (§8.2) is folded into the same prompt/template that writes the narrative, so a driver that has fired before reads as "the third consecutive month" rather than a fresh surprise |
-| **What should we do about it?** | `compile_action_plan` | Every finding (plus every unreconciled tie-out gap) becomes one prioritized, owned task (§8.5) |
+| **Why did it change?** | `recall_memory`, `explain_drivers` | Institutional memory (§2.2) is folded into the same prompt/template that writes the narrative, so a driver that has fired before reads as "the third consecutive month" rather than a fresh surprise |
+| **What should we do about it?** | `compile_action_plan` | Every finding (plus every unreconciled tie-out gap) becomes one prioritized, owned task (§2.5) |
 
-### 8.2 Institutional memory — learning across runs, not within one
+### 2.2 Institutional memory — learning across runs, not within one
 
 This is the part that turns a single-shot summary into a system that builds
 intuition: `app/flux/memory.py` keeps two stores, both surviving across every
@@ -278,6 +126,7 @@ the AP ledger):
   driver before, and for how many consecutive periods" in O(1), which is what
   lets a headline say *"the third consecutive month CloudBeam Compute has
   driven Hosting COGS"* instead of re-deriving it from scratch every run.
+  `examples/flux_memory_graph.excerpt.json` is a trimmed excerpt of a real one.
 - **An append-only SQLite history** (`data/flux_memory.db`) — every run, every
   finding, and any analyst feedback (`record_feedback`), the system of record
   for "what did we say, and when."
@@ -299,7 +148,7 @@ has — the read side was never the gap), so the very next run's
 `explain_drivers` prompt says *"analyst previously marked 'confirmed'"*
 without any further wiring.
 
-### 8.3 Data and components
+### 2.3 Data and components
 
 | Piece | File | Role |
 |---|---|---|
@@ -308,11 +157,11 @@ without any further wiring.
 | Variance math | `app/flux/variance.py` | Delta / % / z-score computation and the materiality gate |
 | Driver decomposition | `app/flux/slicer.py` | Cohort slicing and the concentration statistic |
 | Memory | `app/flux/memory.py` | Described above |
-| Action planning | `app/flux/actions.py` | Priority and owner assignment, described in §8.5 |
+| Action planning | `app/flux/actions.py` | Priority and owner assignment, described in §2.5 |
 | Orchestration | `app/flux/graph.py` | LangGraph `StateGraph`, one run per period comparison |
 | Output | `app/flux/brief.py` | A markdown executive brief plus an `.xlsx` workpaper (findings, drivers, actions, tie-out) per comparison, written to `out/flux/` |
 
-### 8.4 Model: serverless Qwen on Modal
+### 2.4 Model: serverless Qwen on Modal
 
 `app/llm.py` uses a self-hosted, scale-to-zero Qwen2.5-7B-Instruct endpoint on
 Modal (`modal_app/qwen_reasoner.py`, deployed separately with `modal deploy`)
@@ -323,9 +172,9 @@ The tradeoff is a cold start on the first call after ~3 minutes idle
 (`scaledown_window=180`). Either way, `explain_drivers` and `synthesize_brief`
 degrade to a deterministic, driver-table-derived template if no LLM is
 configured or a response fails to parse as JSON — same "never hard-fail"
-posture as the AP pipeline's extraction.
+posture as the AP pipeline's extraction (§5.2).
 
-### 8.5 From finding to task list — `app/flux/actions.py`
+### 2.5 From finding to task list — `app/flux/actions.py`
 
 A finding explains a variance; it doesn't tell anyone what to do about it. The
 `compile_action_plan` node closes that gap deterministically, independent of
@@ -358,6 +207,230 @@ The result ships in three places: a "Recommended actions" table at the top of
 the markdown brief (before the per-account detail), an "Actions" sheet in the
 workpaper, and — since the Streamlit flux page just renders the brief file —
 the same table there, with no separate UI code needed.
+
+---
+
+## 3. What the AP pipeline does, concretely
+
+Given `samples/invoices/INV-2001_northwind.txt`:
+
+```
+NORTHWIND LOGISTICS
+Invoice Number: INV-2001
+PO Number: PO-5002
+...
+Total Due: USD 5190.00
+```
+
+The system produces:
+
+- **Structured fields** — vendor, invoice number, dates, PO reference, line items, total
+- **A three-way match grid** — invoice vs. purchase order vs. bank feed, attribute by attribute
+- **Control exceptions** — `[HIGH] amount_over_po: Invoice 5,190.00 exceeds PO 4,200.00 by 990.00 (tolerance 84.00)`
+- **A recommendation** — `HOLD` (never an action, only a recommendation)
+- **An audit workpaper** — `out/workpaper_INV-2001_38e95103.xlsx`, five sheets
+  (a copy is committed at `examples/workpaper_INV-2001_38e95103.xlsx`)
+- **A review queue entry** — surfaced in the Streamlit approval inbox
+
+---
+
+## 4. AP architecture
+
+```
+                      ┌─────────────────────────────────────────┐
+   invoice document   │           LangGraph  (app/graph.py)     │
+   (.txt / .pdf)  ───►│                                         │
+                      │  ingest_document                        │
+                      │        ↓                                │
+                      │  extract_fields ──────► LLM or parser   │
+                      │        ↓                                │
+                      │  match_records ───────► semantic layer  │
+                      │        ↓                    (SQLite)    │
+                      │  evaluate_controls ───► control rules   │
+                      │        ↓                                │
+                      │  draft_narrative ─────► LLM or template │
+                      │        ↓                                │
+                      │  compile_workpaper ───► openpyxl .xlsx  │
+                      │        ↓                                │
+                      │  queue_for_review ────► invoices table  │
+                      └─────────────────┬───────────────────────┘
+                                        │
+                                        ▼
+                        Streamlit approval inbox (human decides)
+```
+
+Seven nodes, linear, deterministic. No conditional edges and no agent loop —
+this is deliberate, see §10.
+
+---
+
+## 5. AP components
+
+### 5.1 Financial semantic layer — `app/store.py`, `data/seed.py`
+
+A SQLite database standing in for the three systems a real finance team would
+query. Using one local store keeps the demo self-contained and reproducible.
+
+| Table | Stands in for | Contents |
+|---|---|---|
+| `vendors` | Vendor master / CRM | name, tax ID, payment terms, active status |
+| `purchase_orders` | ERP | PO number, vendor, amount, status, issue date |
+| `bank_transactions` | Bank feed | posted date, amount, counterparty, reference |
+| `invoices` | AP subledger | extracted fields, recommendation, narrative, workpaper path, status |
+| `invoice_exceptions` | — | one row per control failure, with severity |
+| `approvals` | Audit trail | who decided what, when, with what note |
+
+Lookups are intentionally forgiving in the way a real matcher must be:
+`find_vendor` falls back from exact name match to a prefix match;
+`find_bank_payment` matches on invoice reference first, then on amount.
+
+`python data/seed.py` drops and rebuilds the database with four vendors, four
+POs, and three settled bank transactions.
+
+### 5.2 Document extraction — `app/extraction.py`
+
+Turns document text into a structured invoice dict. Two paths:
+
+- **With a model configured (`MODAL_QWEN_URL`)** — the text goes to the model
+  with a prompt demanding a strict JSON object. The response is JSON-extracted
+  and parsed.
+- **Without one** — a deterministic regex parser pulls the same fields, and a
+  column-aware regex reads the line-item table.
+
+The LLM path degrades to the parser on any JSON failure, so extraction never
+hard-fails. The resulting dict carries `extraction_method` so the workpaper
+records how each field was obtained — an audit trail requirement, not a nicety.
+
+PDFs are read via `pypdf`; `.txt` is read directly.
+
+### 5.3 Control rules — `app/controls.py`
+
+Pure functions over `(extracted, vendor, po, bank_txn, prior_invoice)`. No model
+involvement — these are the checks that decide whether money moves, so they are
+ordinary deterministic code that can be read and audited.
+
+| Code | Severity | Fires when |
+|---|---|---|
+| `unknown_vendor` | critical | Payee absent from the vendor master |
+| `duplicate_invoice` | critical | Invoice number already processed |
+| `inactive_vendor` | high | Vendor exists but isn't active |
+| `missing_po` | high | No PO referenced — three-way match impossible |
+| `po_not_found` | high | PO referenced but absent from the ERP |
+| `amount_over_po` | high | Invoice exceeds PO beyond tolerance |
+| `unreadable_total` | high | No total could be extracted |
+| `po_closed` | medium | PO already closed |
+| `possible_prior_payment` | medium | Bank feed shows a matching settlement |
+| `invalid_dates` | medium | Due date precedes invoice date |
+| `terms_mismatch` | low | Stated terms disagree with the vendor master |
+
+Tolerance is `max(2% of PO, $50.00)` (`app/config.py`), so small invoices aren't
+flagged over rounding and large ones aren't waved through on a percentage.
+
+The recommendation is a pure function of the worst severity present:
+critical/high → `hold`, medium → `review`, otherwise → `approve`.
+
+### 5.4 Audit workpaper — `app/workpaper.py`
+
+An `openpyxl` workbook, one per invoice, with five sheets:
+
+1. **Summary** — preparer, run ID, source document, extraction method, the key fields, exception count, recommendation, and the narrative
+2. **Three-Way Match** — attribute grid across invoice / PO / bank with an "Agrees?" column
+3. **Exceptions** — every exception, severity-shaded (red → green)
+4. **Line Items** — the parsed invoice table
+5. **Source Document** — the original text, verbatim, as evidence
+
+The point is that a reviewer can hand this file to an auditor without rebuilding
+the reasoning: findings and the underlying evidence live in one artifact.
+
+### 5.5 Orchestration — `app/graph.py`
+
+A LangGraph `StateGraph` over a `ReconState` TypedDict. Each node returns a
+partial state update:
+
+| Node | Reads | Writes |
+|---|---|---|
+| `ingest_document` | `source_file` | `raw_text` |
+| `extract_fields` | `raw_text` | `extracted` |
+| `match_records` | `extracted` | `vendor`, `po`, `bank_txn`, `prior_invoice` |
+| `evaluate_controls` | all matches | `exceptions`, `recommendation` |
+| `draft_narrative` | findings | `narrative` |
+| `compile_workpaper` | everything | `workpaper_path` |
+| `queue_for_review` | everything | `invoice_id` |
+
+`process_invoice(source_file)` is the single entry point: it mints a run ID,
+builds the graph, and invokes it. Both the CLI and the UI go through it, so
+there is exactly one path.
+
+### 5.6 Review UI — `ui/streamlit_app.py`
+
+The human-in-the-loop surface, and the reason the agent's output is a
+*recommendation*:
+
+- Sidebar queue filtered by status, with a count
+- Three-way match rendered as an attribute table with an explicit `OK` / `MISMATCH` column
+- Invoice / PO / variance metrics
+- Exceptions as severity-coloured cards
+- The auditor narrative
+- One-click workpaper download
+- Approve / reject with a reviewer note, written to `approvals` as an audit trail
+
+The same Streamlit app carries the flux page described in §2.2.
+
+---
+
+## 6. Running it
+
+```bash
+pip install -r requirements.txt
+cp .env.example .env          # MODAL_QWEN_URL optional; unset runs deterministic
+
+python data/seed_flux.py      # 20 months of synthetic summaries + subledgers
+python run_flux.py --replay   # every period, oldest first, so memory accumulates
+
+python data/seed.py           # build the AP ledger
+python run_demo.py            # process all sample invoices
+
+streamlit run ui/streamlit_app.py
+```
+
+`python run_flux.py 2026-08` runs a single period comparison instead of the
+full replay.
+
+---
+
+## 7. The AP demo cases
+
+The five sample invoices are built to trip a different control each:
+
+| Invoice | Scenario | Verdict |
+|---|---|---|
+| INV-1001 | Clean match, but the bank feed shows it settled | REVIEW — possible prior payment |
+| INV-2001 | Freight surcharges push it 990.00 over PO-5002 | HOLD — amount over PO |
+| INV-1001 (dup) | Same invoice number resubmitted weeks later | HOLD — duplicate invoice |
+| INV-7788 | Globex: not in the vendor master, PO doesn't exist | HOLD — unknown vendor |
+| INV-4102 | Emergency HVAC repair, no PO raised | HOLD — three-way match impossible |
+
+Order matters for the duplicate case: `run_demo.py` fixes the sequence so the
+original is processed before its duplicate.
+
+---
+
+## 8. Design decisions
+
+**The model doesn't decide payments.** Extraction and narrative use the LLM;
+matching and control evaluation are deterministic code. Anything that determines
+whether money moves is auditable and reproducible. The flux pipeline draws the
+same line in the same place (§2.4): `variance.py`, `slicer.py` and `actions.py`
+compute every number, priority and owner; the model only writes prose over
+facts it was handed.
+
+**It runs without a model configured.** No `MODAL_QWEN_URL` and the pipeline
+still completes via the regex parser and a templated narrative. A demo that
+depends on a live provider is a demo that can fail in front of judges.
+Configuring Qwen upgrades extraction quality; it is never load-bearing.
+
+**The workpaper carries its own evidence.** The source text ships inside the
+workbook, so findings can be checked without going back to the system.
 
 ---
 
@@ -405,9 +478,14 @@ Honest about what this is — a hackathon slice:
   would branch on extraction confidence and retry failed parses.
 - **The semantic layer is synthetic.** SQLite with seeded rows, not a real ERP
   connector. The store interface is narrow enough to swap.
-- **No vector retrieval yet.** The original design called for pgvector; matching
-  is currently exact-then-prefix. Fuzzy vendor resolution over embeddings is the
-  obvious next step for messy real-world vendor names.
+- **Vendor matching is exact-then-prefix, by choice.** The original design
+  called for pgvector. At this data scale — four seeded vendors with clean,
+  canonical names — an embedding index would add a dependency and a failure
+  mode without changing a single match outcome, so it was scoped out.
+  Embedding-based vendor resolution earns its place against messy real-world
+  vendor masters (`ACME Corp.` / `Acme Corporation` / `ACME CORP LLC`), not
+  against this dataset. The same applies to flux's driver keys, which are
+  matched on exact `account::driver` identity.
 - **PDF handling is text-only.** `pypdf` extracts text; scanned invoices would
   need a multimodal pass.
 - **Single-user approvals.** `decided_by` is hardcoded to `reviewer`; no auth,
@@ -423,11 +501,11 @@ Honest about what this is — a hackathon slice:
   can bundle several drivers.
 - **Flux's cohort dimension is fixed per account prefix** (customers for `4xxx`
   revenue, vendors for `5xxx`/`6xxx` cost) rather than configurable or inferred.
-- **The analyst-feedback loop (§8.2) only reaches the narrative, not the
+- **The analyst-feedback loop (§2.2) only reaches the narrative, not the
   scoring.** Confirming or flagging a finding in the Streamlit flux page
   updates `last_verdict`/`last_note`, which `recall()` folds into the next
   run's prompt text — but `compile_action_plan`'s priority and owner
-  assignment (§8.5) are still fixed per-account heuristics, blind to whether
+  assignment (§2.5) are still fixed per-account heuristics, blind to whether
   an analyst confirmed the finding or whether the resulting action was ever
   actually taken. A verdict changes what the narrative says, not what gets
   prioritized.
