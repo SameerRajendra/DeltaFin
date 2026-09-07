@@ -311,6 +311,16 @@ overrun running June–August 2026) is reported with its streak and — once fed
 back through `record_feedback` — a remembered analyst verdict, rather than as
 an unexplained one-off.
 
+The loop closes in the Streamlit flux page: `flux_page()`'s "Analyst feedback"
+expander looks up the currently-displayed period comparison's findings by
+their real SQLite ids (`memory.findings_for_run`) and renders a Confirm /
+Off-base control per finding. Submitting one calls `record_feedback`, which
+inserts a `feedback` row and stamps `last_verdict`/`last_note` onto that
+account's graph edges; `recall()` already reads those two fields (it always
+has — the read side was never the gap), so the very next run's
+`explain_drivers` prompt says *"analyst previously marked 'confirmed'"*
+without any further wiring.
+
 ### 8.3 Data and components
 
 | Piece | File | Role |
@@ -419,12 +429,20 @@ Honest about what this is — a hackathon slice:
 - **Flux's memory has no decay or contradiction handling.** A driver that
   stops mattering just stops appearing in findings; the graph still remembers
   it forever. And `record_feedback` overwrites the account's last verdict
-  globally rather than per-driver.
+  globally rather than per-driver — confirming one driver's finding also
+  stamps that verdict onto every other driver edge for the same account,
+  since the UI's feedback control only carries a `finding_id`, and a finding
+  can bundle several drivers.
 - **Flux's cohort dimension is fixed per account prefix** (customers for `4xxx`
   revenue, vendors for `5xxx`/`6xxx` cost) rather than configurable or inferred.
-- **Action-plan priority/owner are per-account heuristics**, not learned from
-  outcomes — there's no feedback loop from "was this action actually taken"
-  back into how future findings get prioritized.
+- **The analyst-feedback loop (§8.2) only reaches the narrative, not the
+  scoring.** Confirming or flagging a finding in the Streamlit flux page
+  updates `last_verdict`/`last_note`, which `recall()` folds into the next
+  run's prompt text — but `compile_action_plan`'s priority and owner
+  assignment (§8.5) are still fixed per-account heuristics, blind to whether
+  an analyst confirmed the finding or whether the resulting action was ever
+  actually taken. A verdict changes what the narrative says, not what gets
+  prioritized.
 - **The hosted Modal UI is a manual snapshot**, not a deployment that tracks
   the pipelines live — it only updates when someone re-runs `modal deploy`
   after generating new local demo data.

@@ -1,7 +1,5 @@
 """Zero-copy ingestion of period summaries and transaction-level CSVs via DuckDB."""
 
-from datetime import date
-
 import duckdb
 
 from app import config
@@ -129,7 +127,3 @@ def tie_out(conn, period: str) -> list[dict]:
             }
         )
     return out
-
-
-def today_period() -> str:
-    return date.today().strftime("%Y-%m")

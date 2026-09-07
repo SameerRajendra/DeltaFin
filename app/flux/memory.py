@@ -185,3 +185,29 @@ def recent_findings(conn, account_code: str, limit: int = 5) -> list[dict]:
         (account_code, limit),
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def findings_for_run(conn, period: str, prior_period: str, limit: int | None = None) -> list[dict]:
+    """Findings from the most recent run of this exact period/prior_period comparison.
+
+    `findings.period` alone doesn't disambiguate which prior_period a run was
+    compared against (the same period can in principle be re-run against a
+    different baseline), so this joins through `runs` to pin down the run,
+    then returns that run's findings in `id ASC` order -- the order
+    `persist_findings` wrote them in. Each row includes the real SQLite `id`,
+    which is what a caller needs to attach a `record_feedback` verdict to a
+    specific finding (see `ui/streamlit_app.py`'s flux page).
+    """
+    run = conn.execute(
+        "SELECT id FROM runs WHERE period = ? AND prior_period = ? ORDER BY id DESC LIMIT 1",
+        (period, prior_period),
+    ).fetchone()
+    if not run:
+        return []
+    query = "SELECT * FROM findings WHERE run_id = ? ORDER BY id ASC"
+    params = [run["id"]]
+    if limit is not None:
+        query += " LIMIT ?"
+        params.append(limit)
+    rows = conn.execute(query, params).fetchall()
+    return [dict(r) for r in rows]

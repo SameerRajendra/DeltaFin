@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app import config, store  # noqa: E402
 from app import graph as ap_graph  # noqa: E402
+from app.flux import memory as flux_memory  # noqa: E402
 
 SEVERITY_COLOR = {
     "critical": "#c0392b",
@@ -28,6 +29,11 @@ st.set_page_config(page_title="AP Approval Inbox", page_icon="", layout="wide")
 @st.cache_resource
 def get_conn():
     return store.connect()
+
+
+@st.cache_resource
+def get_flux_conn():
+    return flux_memory.connect()
 
 
 def money(value, currency="USD"):
@@ -282,6 +288,56 @@ def _flux_recurring_drivers(limit=10):
     return df.head(limit)
 
 
+def _flux_feedback_section(brief):
+    """Analyst feedback control for the currently-displayed period comparison.
+
+    Confirm / off-base a specific finding by its real SQLite id
+    (`memory.findings_for_run`) -> `memory.record_feedback` -> stamps
+    `last_verdict`/`last_note` on that account's graph edges -> already picked
+    up by `memory.recall()` in the next `run_flux.py` invocation. This is the
+    write side of institutional memory; everything else on this page is the
+    read side.
+    """
+    conn = get_flux_conn()
+    findings = flux_memory.findings_for_run(conn, brief["current_period"], brief["prior_period"])
+    if not findings:
+        return
+    with st.expander(f"Analyst feedback ({len(findings)} findings)", expanded=False):
+        st.caption(
+            "Confirm a finding or flag it as off-base. This updates the memory graph's "
+            "`last_verdict`/`last_note` for the account and is folded into the narrative "
+            "prompt next time this account shows up — it does not change this run's "
+            "priority or owner assignment."
+        )
+        for finding in findings:
+            finding_id = finding["id"]
+            existing = conn.execute(
+                "SELECT verdict, note FROM feedback WHERE finding_id = ? ORDER BY id DESC LIMIT 1",
+                (finding_id,),
+            ).fetchone()
+            st.markdown(f"**{finding['account_name']}** — {finding['headline']}")
+            if existing:
+                note_suffix = f' — "{existing["note"]}"' if existing["note"] else ""
+                st.caption(f"You marked this: **{existing['verdict']}**{note_suffix}")
+            else:
+                cols = st.columns([3, 1, 1])
+                note = cols[0].text_input(
+                    "Note",
+                    key=f"flux_note_{finding_id}",
+                    label_visibility="collapsed",
+                    placeholder="Optional note",
+                )
+                if cols[1].button("Confirm", key=f"flux_confirm_{finding_id}"):
+                    graph = flux_memory.load_graph()
+                    flux_memory.record_feedback(conn, graph, finding_id, "confirmed", note)
+                    st.rerun()
+                if cols[2].button("Off-base", key=f"flux_offbase_{finding_id}"):
+                    graph = flux_memory.load_graph()
+                    flux_memory.record_feedback(conn, graph, finding_id, "off-base", note)
+                    st.rerun()
+            st.divider()
+
+
 def flux_page():
     st.title("Variance Explanation Agent")
     st.caption("What changed, why, and what's driving it — with intuition that compounds across runs")
@@ -346,6 +402,8 @@ def flux_page():
         st.markdown(brief["md_path"].read_text(encoding="utf-8"))
 
     if config.FLUX_DB_PATH.exists():
+        _flux_feedback_section(brief)
+
         with st.expander("Run history (institutional memory, SQLite)"):
             hist_conn = sqlite3.connect(config.FLUX_DB_PATH)
             hist_conn.row_factory = sqlite3.Row
