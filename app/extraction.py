@@ -16,7 +16,7 @@ EXTRACTION_PROMPT = """You are an accounts-payable document extraction engine.
 Return ONLY a JSON object with these keys:
 invoice_number, vendor_name, tax_id, invoice_date (YYYY-MM-DD), due_date (YYYY-MM-DD),
 po_number (null if absent), currency, total_amount (number),
-line_items (list of {sku, description, qty, unit_price, amount}).
+line_items (list of {{sku, description, qty, unit_price, amount}}).
 
 Invoice text:
 ---

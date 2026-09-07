@@ -23,6 +23,8 @@ def _run_one(period=None, prior_period=None):
         print(f"  [{f['confidence']:<4}] {f['account_name']}: {f['headline']}")
     print(f"  brief     : {result.get('brief_path')}")
     print(f"  workpaper : {result.get('workpaper_path')}")
+    print(f"  analysis  : {result.get('analysis_path')}")
+    print(f"  actions   : {result.get('actions_path')}")
     return result
 
 

@@ -1,0 +1,10 @@
+txn_id,txn_date,account_code,entity,department,region,segment,customer_id,customer_name,vendor,amount,memo
+TXN-0001,2026-09-10,4000,Money Ops US,Sales,AMER,Enterprise,ENT-01,Globex Corp,,145000,Subscription revenue
+TXN-0002,2026-09-10,4000,Money Ops US,Sales,AMER,Enterprise,ENT-02,Initech Holdings,,95000,Subscription revenue
+TXN-0003,2026-09-10,4000,Money Ops US,Sales,AMER,Enterprise,ENT-04,Stark Industries,,60000,Subscription revenue
+TXN-0004,2026-09-10,4000,Money Ops US,Sales,AMER,Enterprise,ENT-05,Wayne Enterprises,,65000,Subscription revenue
+TXN-0005,2026-09-10,4000,Money Ops US,Sales,AMER,Enterprise,ENT-03,Umbrella Group,,73000,Subscription revenue
+TXN-0006,2026-09-12,4000,Money Ops US,Sales,AMER,Enterprise,QTM-01,Quantum Dynamics,,35000,New enterprise account activated
+TXN-0007,2026-09-22,5000,Money Ops US,Engineering,AMER,,,,CloudBeam Compute,22000,Elastic compute burst - usage overage
+TXN-0008,2026-09-05,5000,Money Ops US,Engineering,AMER,,,,NimbusHost Cloud,41440.21,Production hosting - base usage
+TXN-0009,2026-09-09,6010,Money Ops US,G&A,AMER,,,,Corporate Services Inc,45000,Corporate overhead allocation

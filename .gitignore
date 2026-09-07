@@ -9,3 +9,4 @@ out/
 .playwright-mcp/
 .gide/
 data/flux_memory_graph.json
+data/uploads/

@@ -3,6 +3,7 @@
 import json
 import sqlite3
 import sys
+import uuid
 from pathlib import Path
 
 import pandas as pd
@@ -11,6 +12,7 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app import config, store  # noqa: E402
+from app import graph as ap_graph  # noqa: E402
 
 SEVERITY_COLOR = {
     "critical": "#c0392b",
@@ -156,6 +158,34 @@ def render_detail(conn, invoice):
         st.caption(f"Decision recorded: {invoice['status']}")
 
 
+def _handle_invoice_upload():
+    uploaded = st.file_uploader(
+        "Invoice document (.txt or .pdf)", type=["txt", "pdf"], key="ap_upload"
+    )
+    if uploaded is None:
+        return
+    if not st.button("Run through the reconciliation agent", key="ap_process_upload", type="primary"):
+        return
+
+    config.UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    dest = config.UPLOADS_DIR / f"{uuid.uuid4().hex[:8]}_{uploaded.name}"
+    dest.write_bytes(uploaded.getvalue())
+
+    with st.spinner(f"Extracting, matching, and evaluating controls for {uploaded.name}..."):
+        try:
+            result = ap_graph.process_invoice(dest)
+        except Exception as exc:  # noqa: BLE001 -- surface any failure to the uploader, don't crash the page
+            st.error(f"Processing failed: {exc}")
+            return
+
+    rec = (result.get("recommendation") or "").upper()
+    st.success(
+        f"Processed {uploaded.name} as invoice {result.get('extracted', {}).get('invoice_number', '?')} "
+        f"— agent recommendation: **{rec}**. It's now in the queue below."
+    )
+    st.rerun()
+
+
 def ap_inbox():
     conn = get_conn()
     st.title("AP Approval Inbox")
@@ -164,6 +194,13 @@ def ap_inbox():
     if not config.DB_PATH.exists():
         st.error("No ledger found. Run `python data/seed.py` then `python run_demo.py`.")
         return
+
+    with st.expander("Upload a new invoice", expanded=False):
+        st.caption(
+            "Runs the same LangGraph pipeline as `run_demo.py` — extraction, three-way match, "
+            "AP controls, workpaper, PRISM trace — live, on this one document."
+        )
+        _handle_invoice_upload()
 
     status = st.sidebar.selectbox(
         "Queue", ["pending_review", "approved", "rejected", "all"], index=0
@@ -198,11 +235,15 @@ def _flux_briefs():
         parts = stem.split("_")
         prior_period, current_period = parts[1], parts[3]
         xlsx_path = md_path.with_suffix(".xlsx")
+        analysis_path = md_path.with_name(f"{stem}_analysis.txt")
+        actions_path = md_path.with_name(f"{stem}_actions.txt")
         entry = {
             "prior_period": prior_period,
             "current_period": current_period,
             "md_path": md_path,
             "xlsx_path": xlsx_path if xlsx_path.exists() else None,
+            "analysis_path": analysis_path if analysis_path.exists() else None,
+            "actions_path": actions_path if actions_path.exists() else None,
             "mtime": md_path.stat().st_mtime,
         }
         key = (prior_period, current_period)
@@ -263,15 +304,46 @@ def flux_page():
         with st.sidebar.expander(f"Recurring drivers ({len(recurring)})", expanded=False):
             st.dataframe(recurring, hide_index=True, use_container_width=True)
 
+    # Both model outputs, front and center -- the whole point of this page.
+    col_analysis, col_actions = st.columns(2)
+    with col_analysis:
+        st.subheader("Analysis — what changed, why")
+        if brief["analysis_path"]:
+            st.text(brief["analysis_path"].read_text(encoding="utf-8"))
+        else:
+            st.info("No analysis output for this run.")
+    with col_actions:
+        st.subheader("Recommended actions — what to do next")
+        if brief["actions_path"]:
+            st.text(brief["actions_path"].read_text(encoding="utf-8"))
+        else:
+            st.info("No action-plan output for this run.")
+
+    dl_cols = st.columns(3)
     if brief["xlsx_path"]:
-        st.download_button(
-            "Download workpaper (.xlsx)",
+        dl_cols[0].download_button(
+            "Workpaper (.xlsx)",
             data=brief["xlsx_path"].read_bytes(),
             file_name=brief["xlsx_path"].name,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
+    if brief["analysis_path"]:
+        dl_cols[1].download_button(
+            "Analysis (.txt)",
+            data=brief["analysis_path"].read_bytes(),
+            file_name=brief["analysis_path"].name,
+            mime="text/plain",
+        )
+    if brief["actions_path"]:
+        dl_cols[2].download_button(
+            "Actions (.txt)",
+            data=brief["actions_path"].read_bytes(),
+            file_name=brief["actions_path"].name,
+            mime="text/plain",
+        )
 
-    st.markdown(brief["md_path"].read_text(encoding="utf-8"))
+    with st.expander("Full brief (driver tables, tie-out gaps)", expanded=False):
+        st.markdown(brief["md_path"].read_text(encoding="utf-8"))
 
     if config.FLUX_DB_PATH.exists():
         with st.expander("Run history (institutional memory, SQLite)"):
@@ -287,7 +359,7 @@ def flux_page():
 
 
 def main():
-    page = st.sidebar.radio("View", ["AP Approval Inbox", "Variance Explanation Agent"])
+    page = st.sidebar.radio("View", ["Variance Explanation Agent", "AP Approval Inbox"])
     st.sidebar.divider()
     if page == "AP Approval Inbox":
         ap_inbox()

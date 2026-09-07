@@ -23,6 +23,7 @@ QWEN_MODEL_NAME = "qwen-reasoner"
 DB_PATH = ROOT / os.getenv("LEDGER_DB", "data/ledger.db")
 OUT_DIR = ROOT / "out"
 SAMPLES_DIR = ROOT / "samples" / "invoices"
+UPLOADS_DIR = ROOT / "data" / "uploads"
 
 # A vendor invoice may exceed its PO by this much before it is an exception.
 AMOUNT_TOLERANCE_PCT = 0.02

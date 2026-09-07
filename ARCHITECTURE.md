@@ -272,7 +272,10 @@ invoice, but explaining a month-over-month change across a whole P&L. The
 target bar is going from *"Revenue increased 18%"* to *"Revenue increased 18%,
 primarily driven by a 32% increase in enterprise accounts, with three
 customers accounting for 64% of the increase"* — and doing it in a way that
-gets sharper the more months it's run against, not just once.
+gets sharper the more months it's run against, not just once. It doesn't stop
+at the explanation either: every finding is turned into a prioritized, owned
+next step (§8.5), so the output reads as a task list a finance team can act
+on, not just a report they read and set aside.
 
 ### 8.1 What changed / why / what's driving it
 
@@ -283,6 +286,7 @@ Three questions, three stages of the graph:
 | **What changed?** | `compute_variances`, `rank_materiality` | Delta, %, and a z-score against a 6-month trailing baseline per account; ranked by a materiality gate (`app/config.py`: `$25k` absolute, `10%` with a `$5k` floor, or a `2.0` z-score anomaly) |
 | **What's driving it?** | `slice_drivers` | The account's subledger is grouped by customer (revenue) or vendor (cost), each member classified `new` / `churned` / `expansion` / `contraction`, ranked by contribution, with a cumulative-share concentration stat (`app/flux/graph.py: _concentration_note`) — the "3 customers account for 64%" figure |
 | **Why did it change?** | `recall_memory`, `explain_drivers` | Institutional memory (§8.2) is folded into the same prompt/template that writes the narrative, so a driver that has fired before reads as "the third consecutive month" rather than a fresh surprise |
+| **What should we do about it?** | `compile_action_plan` | Every finding (plus every unreconciled tie-out gap) becomes one prioritized, owned task (§8.5) |
 
 ### 8.2 Institutional memory — learning across runs, not within one
 
@@ -316,8 +320,9 @@ an unexplained one-off.
 | Variance math | `app/flux/variance.py` | Delta / % / z-score computation and the materiality gate |
 | Driver decomposition | `app/flux/slicer.py` | Cohort slicing and the concentration statistic |
 | Memory | `app/flux/memory.py` | Described above |
+| Action planning | `app/flux/actions.py` | Priority and owner assignment, described in §8.5 |
 | Orchestration | `app/flux/graph.py` | LangGraph `StateGraph`, one trajectory per period comparison, traced to PRISM with the same `get_handler` / `instrument` / `flush` pattern as `app/graph.py` |
-| Output | `app/flux/brief.py` | A markdown executive brief plus an `.xlsx` workpaper (findings, drivers, tie-out) per comparison, written to `out/flux/` |
+| Output | `app/flux/brief.py` | A markdown executive brief plus an `.xlsx` workpaper (findings, drivers, actions, tie-out) per comparison, written to `out/flux/` |
 
 ### 8.4 Model: serverless Qwen on Modal, Anthropic as fallback
 
@@ -332,9 +337,68 @@ degrade to a deterministic, driver-table-derived template if no LLM is
 configured or a response fails to parse as JSON — same "never hard-fail"
 posture as the AP pipeline's extraction.
 
+### 8.5 From finding to task list — `app/flux/actions.py`
+
+A finding explains a variance; it doesn't tell anyone what to do about it. The
+`compile_action_plan` node closes that gap deterministically, independent of
+whether an LLM is configured:
+
+- **Priority** (`default_priority`) comes from the same signals `variance.py`
+  already used to decide materiality in the first place — twice the absolute
+  threshold or a sharp z-score anomaly is `P1` ("act this week"); a material
+  finding with driver detail is `P2` ("review this close cycle"); a material
+  finding with no subledger detail to point to is `P3` ("monitor, nothing
+  concrete to act on yet").
+- **Owner** (`owner_for`) maps the account to the team actually positioned to
+  act on it — Sales Ops for revenue accounts, Vendor Management for hosting
+  COGS, Marketing for the S&M line, Controller/Accounting for accruals —
+  rather than routing everything to a generic "Finance" bucket.
+- **Subledger tie-out gaps fold into the same list.** An account can clear
+  every materiality check and still hide a real problem — the Insurance
+  accrual with 0% subledger coverage never shows up as a "variance" (nothing
+  changed month over month) but is still a `P1` for Controller/Accounting,
+  because an unreconciled accrual is an audit risk regardless of whether the
+  number moved.
+- **The LLM is asked for the same fields** (`priority`, `owner`, and a
+  concrete `action`) when one is configured, and told explicitly to name a
+  specific team and a specific next step ("ask Sales Ops to confirm whether
+  this is contracted run-rate or a one-time upsell") rather than "monitor" —
+  `actions.py`'s deterministic assignment is the fallback when the LLM omits
+  or mis-shapes those fields, not the primary path.
+
+The result ships in three places: a "Recommended actions" table at the top of
+the markdown brief (before the per-account detail), an "Actions" sheet in the
+workpaper, and — since the Streamlit flux page just renders the brief file —
+the same table there, with no separate UI code needed.
+
 ---
 
-## 9. Limits and what's next
+## 9. Sharing it beyond this machine
+
+`streamlit run ui/streamlit_app.py` only ever serves `localhost` — usable for
+a live demo on this laptop, useless for a judge or teammate opening a link on
+their own machine. `modal_app/streamlit_host.py` solves that by deploying the
+same Streamlit app to Modal as a public, unauthenticated web endpoint:
+
+```bash
+modal deploy modal_app/streamlit_host.py
+# -> https://<workspace>--deltafin-ui-serve.modal.run
+```
+
+It bakes the **current local `data/` and `out/` into the image at deploy
+time** (`Image.add_local_dir(..., copy=True)`) rather than running the
+pipelines live — deliberately, for two reasons: a public endpoint with no
+login has no business holding `PRISMTRACE_API_KEY` / `MODAL_KEY` /
+`ANTHROPIC_API_KEY` (`.env` is excluded from the image outright), and a
+snapshot means the page has real content the instant it's opened instead of
+depending on a cold LLM call succeeding for a first-time visitor. The
+tradeoff: it's a snapshot, not a live view — approve/reject clicks write to
+that container's own copy of the ledger, and new invoice or period runs don't
+appear there until the next `modal deploy`.
+
+---
+
+## 10. Limits and what's next
 
 Honest about what this is — a hackathon slice:
 
@@ -358,3 +422,9 @@ Honest about what this is — a hackathon slice:
   globally rather than per-driver.
 - **Flux's cohort dimension is fixed per account prefix** (customers for `4xxx`
   revenue, vendors for `5xxx`/`6xxx` cost) rather than configurable or inferred.
+- **Action-plan priority/owner are per-account heuristics**, not learned from
+  outcomes — there's no feedback loop from "was this action actually taken"
+  back into how future findings get prioritized.
+- **The hosted Modal UI is a manual snapshot**, not a deployment that tracks
+  the pipelines live — it only updates when someone re-runs `modal deploy`
+  after generating new local demo data.

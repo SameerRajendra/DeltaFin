@@ -187,13 +187,73 @@ def _write_xlsx(state, path):
     wb.save(path)
 
 
+def _analysis_text(state) -> str:
+    """Plain-text rendering of just the LLM's what-changed/why analysis --
+    no action items, no driver tables. Meant to be readable on its own."""
+    lines = [
+        f"VARIANCE ANALYSIS: {state['prior_period']} -> {state['period']}",
+        f"Generated {datetime.now(timezone.utc).isoformat(timespec='seconds')} UTC | run {state.get('run_id')}",
+        "",
+        "EXECUTIVE SUMMARY",
+        "=================",
+        state.get("brief_text", "").strip() or "No material variances this period.",
+        "",
+    ]
+    findings = state.get("findings") or []
+    if findings:
+        lines.append("PER-ACCOUNT ANALYSIS")
+        lines.append("=====================")
+        lines.append("")
+        for f in findings:
+            lines.append(f"{f['account_name']} ({f['account_code']})")
+            lines.append("-" * len(f"{f['account_name']} ({f['account_code']})"))
+            lines.append(f["headline"])
+            lines.append(
+                f"Delta: ${f['delta']:+,.2f} ({_fmt_pct(f['pct'])}) | "
+                f"materiality: {f['materiality_reason']} | confidence: {f['confidence']}"
+            )
+            lines.append("")
+            lines.append(f["why"])
+            lines.append("")
+    return "\n".join(lines)
+
+
+def _actions_text(state) -> str:
+    """Plain-text rendering of just the next-task output -- what to do about
+    the analysis above, one prioritized, owned item at a time."""
+    plan = state.get("action_plan") or []
+    lines = [
+        f"RECOMMENDED ACTIONS: {state['prior_period']} -> {state['period']}",
+        f"Generated {datetime.now(timezone.utc).isoformat(timespec='seconds')} UTC | run {state.get('run_id')}",
+        "",
+    ]
+    if not plan:
+        lines.append("No actions generated this period.")
+        return "\n".join(lines)
+    for i, item in enumerate(plan, start=1):
+        lines.append(f"{i}. [{item['priority']} - {item['priority_label']}] {item['account_name']}")
+        lines.append(f"   Owner: {item['owner']}")
+        lines.append(f"   Task:  {item['task']}")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def build(state) -> dict:
     config.FLUX_OUT_DIR.mkdir(parents=True, exist_ok=True)
     stem = f"flux_{state['prior_period']}_to_{state['period']}_{state.get('run_id')}"
     md_path = config.FLUX_OUT_DIR / f"{stem}.md"
     xlsx_path = config.FLUX_OUT_DIR / f"{stem}.xlsx"
+    analysis_path = config.FLUX_OUT_DIR / f"{stem}_analysis.txt"
+    actions_path = config.FLUX_OUT_DIR / f"{stem}_actions.txt"
 
     md_path.write_text(_markdown(state), encoding="utf-8")
     _write_xlsx(state, xlsx_path)
+    analysis_path.write_text(_analysis_text(state), encoding="utf-8")
+    actions_path.write_text(_actions_text(state), encoding="utf-8")
 
-    return {"brief_path": str(md_path), "workpaper_path": str(xlsx_path)}
+    return {
+        "brief_path": str(md_path),
+        "workpaper_path": str(xlsx_path),
+        "analysis_path": str(analysis_path),
+        "actions_path": str(actions_path),
+    }

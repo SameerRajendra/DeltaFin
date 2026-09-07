@@ -80,6 +80,8 @@ class FluxState(TypedDict, total=False):
     brief_text: str
     brief_path: str
     workpaper_path: str
+    analysis_path: str
+    actions_path: str
 
 
 def _fmt_pct(pct):
