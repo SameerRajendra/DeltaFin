@@ -81,9 +81,9 @@ def recall(graph: dict, account_code: str, driver_keys: list[str], before_period
     """What do we already know about this account and these specific drivers?
 
     `driver_keys` are e.g. customer/vendor ids from slicer.slice_drivers.
-    Returns, per driver: how many prior periods it fired in (streak, only
-    counting a run of periods immediately preceding `before_period`), its
-    historical average contribution share, and the latest analyst verdict.
+    Returns, per driver: whether it has fired before, how many prior periods
+    it fired in (streak, only counting a run of periods immediately preceding
+    `before_period`), and the latest analyst verdict.
     """
     context = {}
     for driver_key in driver_keys:
@@ -101,11 +101,9 @@ def recall(graph: dict, account_code: str, driver_keys: list[str], before_period
                 cursor = prev
             else:
                 break
-        shares = [edge["periods"][p]["share"] for p in periods] if periods else []
         context[driver_key] = {
             "seen_before": bool(periods),
             "streak": streak,
-            "avg_share": round(sum(shares) / len(shares), 4) if shares else None,
             "last_verdict": edge.get("last_verdict"),
             "last_note": edge.get("last_note"),
         }
@@ -177,14 +175,6 @@ def record_feedback(conn, graph: dict, finding_id: int, verdict: str, note: str 
             edge["last_verdict"] = verdict
             edge["last_note"] = note
     save_graph(graph)
-
-
-def recent_findings(conn, account_code: str, limit: int = 5) -> list[dict]:
-    rows = conn.execute(
-        "SELECT * FROM findings WHERE account_code = ? ORDER BY id DESC LIMIT ?",
-        (account_code, limit),
-    ).fetchall()
-    return [dict(r) for r in rows]
 
 
 def findings_for_run(conn, period: str, prior_period: str, limit: int | None = None) -> list[dict]:

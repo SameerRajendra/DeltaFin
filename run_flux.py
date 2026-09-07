@@ -35,11 +35,10 @@ def _replay():
     finally:
         conn.close()
     # First period has no prior to compare against; start from the second.
-    # Each period runs as its own subprocess: institutional memory persists to
-    # disk (SQLite + JSON) between runs by design, but this sandbox's DuckDB
-    # accounting doesn't reliably release memory across many queries in one
-    # long-lived process -- a fresh process per period sidesteps that and
-    # matches how a real nightly close job would run anyway.
+    # Each period runs as its own subprocess: memory persists to disk (SQLite +
+    # JSON) between runs anyway, and a fresh process avoids DuckDB's memory
+    # accounting drifting across a long walk -- which is also how a real nightly
+    # close job would run.
     for period in periods[1:]:
         print(f"\n--- launching {period} ---", flush=True)
         subprocess.run([sys.executable, __file__, period], check=True)

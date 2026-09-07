@@ -1,14 +1,12 @@
-"""Zero-copy ingestion of period summaries and transaction-level CSVs via DuckDB."""
+"""Materialized-on-connect ingestion of period summaries and transaction-level CSVs via DuckDB."""
 
 import duckdb
 
 from app import config
 
-# DuckDB's auto-detected memory limit is unreliable here and OOMs on a plain
-# multi-file glob read, so threads is always pinned. The actual free RAM on
-# this machine fluctuates a lot underneath us (desktop apps, browser tabs),
-# so memory_limit isn't one safe constant -- connect() retries a ladder of
-# them instead of trusting whichever number happened to work last time.
+# DuckDB's auto-detected memory limit OOMs on a plain multi-file glob read, so
+# threads and memory_limit are pinned; connect() tries this ladder in order and
+# keeps the first limit that fits the machine's current free RAM.
 _MEMORY_LADDER = ["256MB", "512MB", "1GB", "2GB", "4GB"]
 
 _SUMMARY_TYPES = {
@@ -40,12 +38,8 @@ def connect():
 
     Materialized, not views, so a `--replay` walk's many queries hit an
     already-parsed in-memory table instead of re-scanning every period CSV
-    each time. The dataset itself is tiny (a few hundred rows); the real
-    constraint is that free system RAM on this machine fluctuates a lot
-    underneath us (desktop apps, browser tabs) and DuckDB's memory_limit
-    has to be pinned (its own auto-detection OOMs on a plain multi-file glob
-    read) -- so we probe a ladder of limits and use the first that fits
-    right now, rather than trust one constant that worked last time.
+    each time. Since DuckDB's memory_limit must be pinned explicitly, we probe
+    `_MEMORY_LADDER` and keep the first limit the machine can currently satisfy.
     """
     last_error = None
     for limit in _MEMORY_LADDER:
