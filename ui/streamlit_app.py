@@ -373,8 +373,8 @@ def _handle_flux_upload():
         "Two files: a period summary (`period, account_code, account_name, amount`) and a "
         "transaction detail file (`period, account_code, amount`, plus `customer_id` or "
         "`vendor`). **Each file needs at least two `YYYY-MM` periods in it** -- the latest two "
-        "present are compared. `resolve_roles` sniffs which file is which by its columns, so "
-        "File 1 / File 2 order genuinely doesn't matter."
+        "present are compared. Drop both files in together in either order: `resolve_roles` "
+        "works out which is which from the columns, not from the order you added them."
     )
 
     # The seeded dataset under data/financials/ is deliberately one period per
@@ -383,18 +383,40 @@ def _handle_flux_upload():
     # pointing them at files that will bounce.
     _offer_sample_uploads()
 
-    file_a = st.file_uploader("File 1", type=["csv", "xlsx"], key="flux_upload_a")
-    file_b = st.file_uploader("File 2", type=["csv", "xlsx"], key="flux_upload_b")
-    if file_a is None or file_b is None:
+    # One multi-file widget rather than two single-file slots: resolve_roles
+    # identifies the summary by its columns, so numbered slots implied an order
+    # that never mattered -- and a single-file uploader gives no affordance for
+    # adding the second file, which read as a broken control.
+    uploaded = st.file_uploader(
+        "Summary + transaction detail (add both)",
+        type=["csv", "xlsx"],
+        accept_multiple_files=True,
+        key="flux_upload_files",
+    ) or []
+
+    if len(uploaded) < 2:
+        if uploaded:
+            # Say so rather than sitting inert -- one file looks like a hang.
+            st.info(f"Got **{uploaded[0].name}**. Add the second file to run the agent.")
         return
+    if len(uploaded) > 2:
+        st.error(
+            f"Add exactly two files -- one period summary and one transaction detail file. "
+            f"You added {len(uploaded)}."
+        )
+        return
+
     if not st.button("Run the variance agent on these files", key="flux_run_upload", type="primary"):
         return
 
     config.UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
-    dest_a = config.UPLOADS_DIR / f"{uuid.uuid4().hex[:8]}_{file_a.name}"
-    dest_a.write_bytes(file_a.getvalue())
-    dest_b = config.UPLOADS_DIR / f"{uuid.uuid4().hex[:8]}_{file_b.name}"
-    dest_b.write_bytes(file_b.getvalue())
+    saved = []
+    for item in uploaded:
+        dest = config.UPLOADS_DIR / f"{uuid.uuid4().hex[:8]}_{item.name}"
+        dest.write_bytes(item.getvalue())
+        saved.append(dest)
+    dest_a, dest_b = saved
+    file_a, file_b = uploaded
 
     with st.spinner("Comparing periods, slicing drivers, and drafting the action plan..."):
         try:
