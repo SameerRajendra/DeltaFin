@@ -53,10 +53,24 @@ def default_priority(drilldown: dict) -> str:
     return "P3"
 
 
-def gap_priority(coverage_pct: float) -> str | None:
+def gap_priority(coverage_pct: float, gap_amount: float = 0.0) -> str | None:
+    """Priority for a subledger tie-out gap, from coverage AND the money behind it.
+
+    Coverage alone is not enough. Judging on percentage only made a $5,000
+    accrual that has not moved in twenty periods outrank a $96,000 revenue
+    swing, and -- because that accrual is 0% covered in every period -- put the
+    identical row at the top of every month's action list. An unreconciled
+    balance is urgent in proportion to what is unreconciled, so this uses the
+    same materiality constants that gate everything else.
+    """
     if coverage_pct >= 99.9:
         return None
-    return "P1" if coverage_pct < 50 else "P2"
+    gap = abs(gap_amount)
+    if gap >= config.MATERIALITY_ABS and coverage_pct < 50:
+        return "P1"
+    if gap >= config.MATERIALITY_FLOOR:
+        return "P2"
+    return "P3"
 
 
 def build_plan(findings: list[dict], tie_out: list[dict]) -> list[dict]:
@@ -78,7 +92,7 @@ def build_plan(findings: list[dict], tie_out: list[dict]) -> list[dict]:
         )
     by_account = {i["account_code"]: i for i in items}
     for row in tie_out:
-        priority = gap_priority(row["coverage_pct"])
+        priority = gap_priority(row["coverage_pct"], row.get("gap", 0.0))
         if not priority:
             continue
         gap_task = (
