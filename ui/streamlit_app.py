@@ -16,6 +16,7 @@ from app import graph as ap_graph  # noqa: E402
 from app.flux import memory as flux_memory  # noqa: E402
 from app.flux import uploads as flux_uploads  # noqa: E402
 from app.flux import brief as flux_brief  # noqa: E402
+from ui import charts  # noqa: E402
 
 SEVERITY_COLOR = {
     "critical": "#c0392b",
@@ -339,6 +340,140 @@ def _flux_feedback_section(brief):
             st.divider()
 
 
+def _parse_account_cell(cell):
+    """'Enterprise Revenue (4000)' -> ('Enterprise Revenue', '4000'). The
+    workbook writes every Account cell in this shape (see brief.py's
+    findings/drivers/actions sheets); Tie-Out is the one sheet that doesn't."""
+    if not isinstance(cell, str) or " (" not in cell:
+        return cell, None
+    name, _, rest = cell.rpartition(" (")
+    return name, rest.rstrip(")")
+
+
+def _parse_priority_code(cell):
+    """'P1 · Act this week' -> 'P1' -- take the first whitespace-delimited
+    token so this doesn't depend on the exact separator character."""
+    if not isinstance(cell, str) or not cell.strip():
+        return "P2"
+    return cell.split()[0]
+
+
+def _reconstruct_prior_current(delta, pct_cell):
+    """Recover an account's prior/current balance from the Findings sheet's
+    Delta and Pct columns for the seeded-brief view's bridge chart.
+
+    The workbook doesn't carry the raw balances, only the already-computed
+    delta and a 1-decimal-rounded percentage string, so this is a best-effort
+    reconstruction (worst for a pct that rounds hard). 'new' means no prior
+    balance at all (pct was +inf) -- prior is exactly 0 there, no division
+    needed. Returns (None, None) when it can't be recovered (e.g. pct is
+    "0.0%", which would divide by zero), and callers must treat that as "no
+    bridge for this account" rather than guessing.
+    """
+    if pct_cell == "new":
+        return 0.0, float(delta)
+    if not isinstance(pct_cell, str) or not pct_cell.endswith("%"):
+        return None, None
+    try:
+        pct = float(pct_cell.rstrip("%")) / 100.0
+    except ValueError:
+        return None, None
+    if pct == 0:
+        return None, None
+    prior = float(delta) / pct
+    return prior, prior + float(delta)
+
+
+@st.cache_data(show_spinner=False)
+def _read_brief_workbook(path_str: str, mtime: float):
+    """Cached read of the evidence sheets a seeded brief's .xlsx carries.
+
+    Keyed on (path, mtime) rather than just the path: st.cache_data hashes
+    its arguments, so passing mtime explicitly busts the cache if a brief is
+    ever regenerated at the same path -- the same reasoning _flux_briefs()
+    already applies when picking the latest file per period pair. Returns
+    empty DataFrames for a sheet (or all sheets) that can't be read, so a
+    missing/corrupt .xlsx degrades to "nothing to chart" rather than crashing
+    the page.
+    """
+    sheets = {}
+    for name in ("Findings", "Drivers", "Tie-Out", "Actions"):
+        try:
+            sheets[name] = pd.read_excel(path_str, sheet_name=name)
+        except Exception:  # noqa: BLE001 -- any read failure degrades to "no data" for this sheet
+            sheets[name] = pd.DataFrame()
+    return sheets
+
+
+def _render_variance_visuals(*, prior_period, current_period, metrics, findings, action_plan_df, tie_out_df,
+                              below_threshold_df=None, below_threshold_note=None):
+    """Shared chart-first rendering for both the upload-result view and the
+    seeded-brief view, so the two look like the same product.
+
+    `findings` is a list of dicts, each with: account_name, account_code,
+    headline, why, pct_display (already-formatted string), delta, priority,
+    owner, confidence, drivers (a DataFrame of member_name/delta/cohort, or
+    empty), prior_amt, current_amt (either may be None if the caller
+    couldn't determine them). An empty `findings` list renders the
+    below-threshold table and materiality-gate explanation instead of any
+    chart -- there is nothing material to show a bridge or movement bar for.
+    """
+    metric_cols = st.columns(len(metrics))
+    for col, (label, value) in zip(metric_cols, metrics.items()):
+        col.metric(label, value)
+
+    if not findings:
+        st.info(below_threshold_note or "No material variances this period.")
+        if below_threshold_df is not None and not below_threshold_df.empty:
+            st.caption("Largest movements below the threshold")
+            st.dataframe(below_threshold_df, hide_index=True, use_container_width=True)
+        return
+
+    st.subheader("Account movement overview")
+    st.caption("Every material finding this period, by delta. Color is priority, not direction.")
+    movement_df = pd.DataFrame(
+        [{"account_name": f["account_name"], "delta": f["delta"], "priority": f["priority"]} for f in findings]
+    )
+    movement_chart = charts.account_movement_chart(movement_df)
+    if movement_chart is not None:
+        st.altair_chart(movement_chart, use_container_width=True)
+
+    st.subheader("Material findings")
+    for f in findings:
+        with st.expander(f"{f['account_name']} — {f['headline']}", expanded=False):
+            st.caption(
+                f"{f['priority']} · {f['owner']} · confidence: {f['confidence']} · "
+                f"delta ${f['delta']:+,.2f} ({f['pct_display']})"
+            )
+            bridge = charts.bridge_chart(
+                f["account_name"], prior_period, current_period,
+                f.get("prior_amt"), f.get("current_amt"), f.get("drivers"),
+            )
+            if bridge is not None:
+                st.altair_chart(bridge, use_container_width=True)
+            else:
+                st.caption("Prior/current balances aren't available to chart a bridge for this account.")
+            driver_chart = charts.driver_contribution_chart(f.get("drivers"))
+            if driver_chart is not None:
+                st.altair_chart(driver_chart, use_container_width=True)
+            else:
+                st.caption("No subledger driver detail available for this account.")
+            st.markdown(f["why"])
+
+    st.subheader("Recommended actions")
+    if action_plan_df is not None and not action_plan_df.empty:
+        st.dataframe(action_plan_df, hide_index=True, use_container_width=True)
+    else:
+        st.caption("No actions generated this period.")
+
+    st.subheader("Subledger tie-out")
+    tie_chart = charts.tie_out_chart(tie_out_df)
+    if tie_chart is not None:
+        st.altair_chart(tie_chart, use_container_width=True)
+    else:
+        st.caption("No tie-out data available for this run.")
+
+
 _SAMPLE_UPLOADS = (
     ("Sample summary (.csv)", "upload_sample_summary.csv", "flux_sample_summary"),
     ("Sample transactions (.csv)", "upload_sample_transactions.csv", "flux_sample_txn"),
@@ -456,39 +591,79 @@ def _render_upload_result(entry):
     for warning in entry.get("warnings") or []:
         st.warning(warning)
 
-    metric_cols = st.columns(3)
-    metric_cols[0].metric("Accounts analyzed", len(state.get("variances", [])))
-    metric_cols[1].metric("Material findings", len(state.get("findings", [])))
-    metric_cols[2].metric("Actions", len(state.get("action_plan", [])))
+    variances_by_code = {v["account_code"]: v for v in state.get("variances") or []}
+    findings = []
+    for f in state.get("findings") or []:
+        v = variances_by_code.get(f["account_code"])
+        drivers = f.get("drivers") or []
+        findings.append(
+            {
+                "account_name": f["account_name"],
+                "account_code": f["account_code"],
+                "headline": f["headline"],
+                "why": f["why"],
+                "delta": f["delta"],
+                "pct_display": flux_brief._fmt_pct(f["pct"]),
+                "priority": f.get("priority") or "P2",
+                "owner": f.get("owner") or "FP&A",
+                "confidence": f.get("confidence") or "—",
+                "drivers": pd.DataFrame(
+                    [{"member_name": d["member_name"], "delta": d["delta"], "cohort": d["cohort"]} for d in drivers]
+                ),
+                "prior_amt": v["prior_amt"] if v else None,
+                "current_amt": v["current_amt"] if v else None,
+            }
+        )
 
-    if not state.get("findings"):
-        st.info(
+    action_plan_df = pd.DataFrame(
+        [
+            {
+                "Priority": f"{item['priority']} · {item['priority_label']}",
+                "Account": f"{item['account_name']} ({item['account_code']})",
+                "Owner": item["owner"],
+                "Task": item["task"],
+            }
+            for item in state.get("action_plan") or []
+        ]
+    )
+    tie_out_df = pd.DataFrame(
+        [{"account_name": t["account_name"], "coverage_pct": t["coverage_pct"]} for t in state.get("tie_out") or []]
+    )
+
+    below_threshold_df = pd.DataFrame()
+    variances = state.get("variances") or []
+    if not findings and variances:
+        top = sorted(variances, key=lambda v: abs(v["delta"]), reverse=True)[:5]
+        below_threshold_df = pd.DataFrame(
+            [
+                {
+                    "Account": v["account_name"],
+                    "Delta": v["delta"],
+                    "Pct": flux_brief._fmt_pct(v["pct"]),
+                }
+                for v in top
+            ]
+        )
+
+    _render_variance_visuals(
+        prior_period=prior,
+        current_period=period,
+        metrics={
+            "Accounts analyzed": len(state.get("variances", [])),
+            "Material findings": len(state.get("findings", [])),
+            "Actions": len(state.get("action_plan", [])),
+        },
+        findings=findings,
+        action_plan_df=action_plan_df,
+        tie_out_df=tie_out_df,
+        below_threshold_df=below_threshold_df,
+        below_threshold_note=(
             f"No account moved enough between {prior} and {period} to clear the materiality gate — "
             f"±${config.MATERIALITY_ABS:,.0f}, or ±{config.MATERIALITY_PCT:.0%} on a balance over "
             f"${config.MATERIALITY_FLOOR:,.0f}, or a {config.ANOMALY_Z}σ swing versus the account's own "
             f"trailing history. That's a clean close, not a failed run."
-        )
-        variances = state.get("variances") or []
-        if variances:
-            top = sorted(variances, key=lambda v: abs(v["delta"]), reverse=True)[:5]
-            rows = [
-                {
-                    "Account": v["account_name"],
-                    "Delta": v["delta"],
-                    "Pct": "new" if v["pct"] == float("inf") else f"{v['pct'] * 100:+.1f}%",
-                }
-                for v in top
-            ]
-            st.caption("Largest movements below the threshold")
-            st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
-
-    col_analysis, col_actions = st.columns(2)
-    with col_analysis:
-        st.subheader("Analysis — what changed, why")
-        st.text(entry["analysis"])
-    with col_actions:
-        st.subheader("Recommended actions — what to do next")
-        st.text(entry["actions"])
+        ),
+    )
 
     stem = entry["stem"]
     dl_cols = st.columns(4)
@@ -520,6 +695,15 @@ def _render_upload_result(entry):
         mime="text/plain",
         key="flux_dl_actions",
     )
+
+    with st.expander("Full text output (analysis + actions)"):
+        col_analysis, col_actions = st.columns(2)
+        with col_analysis:
+            st.subheader("Analysis — what changed, why")
+            st.text(entry["analysis"])
+        with col_actions:
+            st.subheader("Recommended actions — what to do next")
+            st.text(entry["actions"])
 
     with st.expander("Full brief (driver tables, tie-out gaps)"):
         st.markdown(entry["md"])
@@ -559,20 +743,95 @@ def flux_page():
         with st.sidebar.expander(f"Recurring drivers ({len(recurring)})", expanded=False):
             st.dataframe(recurring, hide_index=True, use_container_width=True)
 
-    # Both model outputs, front and center -- the whole point of this page.
-    col_analysis, col_actions = st.columns(2)
-    with col_analysis:
-        st.subheader("Analysis — what changed, why")
-        if brief["analysis_path"]:
-            st.text(brief["analysis_path"].read_text(encoding="utf-8"))
-        else:
-            st.info("No analysis output for this run.")
-    with col_actions:
-        st.subheader("Recommended actions — what to do next")
-        if brief["actions_path"]:
-            st.text(brief["actions_path"].read_text(encoding="utf-8"))
-        else:
-            st.info("No action-plan output for this run.")
+    # The workbook is the one artifact with structured, chartable sheets --
+    # the .md/.txt outputs are prose. Read it (cached on path+mtime) and
+    # normalize its sheets into the same shapes _render_variance_visuals
+    # expects from the live-upload view's `state` dict, so both views produce
+    # the same charts from different sources.
+    if brief["xlsx_path"] and brief["xlsx_path"].exists():
+        sheets = _read_brief_workbook(str(brief["xlsx_path"]), brief["xlsx_path"].stat().st_mtime)
+    else:
+        sheets = {name: pd.DataFrame() for name in ("Findings", "Drivers", "Tie-Out", "Actions")}
+
+    findings_sheet = sheets["Findings"]
+    drivers_sheet = sheets["Drivers"]
+    tie_out_sheet = sheets["Tie-Out"]
+    actions_sheet = sheets["Actions"]
+
+    findings = []
+    for _, row in findings_sheet.iterrows():
+        account_name, account_code = _parse_account_cell(row["Account"])
+        account_drivers = drivers_sheet[drivers_sheet["Account"] == row["Account"]] if not drivers_sheet.empty else pd.DataFrame()
+        drivers_df = pd.DataFrame(
+            {
+                "member_name": account_drivers.get("Driver", pd.Series(dtype=object)),
+                "delta": account_drivers.get("Delta", pd.Series(dtype=float)),
+                "cohort": account_drivers.get("Cohort", pd.Series(dtype=object)),
+            }
+        )
+        prior_amt, current_amt = _reconstruct_prior_current(row["Delta"], row["Pct"])
+        findings.append(
+            {
+                "account_name": account_name,
+                "account_code": account_code,
+                "headline": row["Headline"],
+                "why": row["Why"],
+                "delta": row["Delta"],
+                "pct_display": row["Pct"],
+                "priority": _parse_priority_code(row["Priority"]),
+                "owner": row["Owner"],
+                "confidence": row["Confidence"],
+                "drivers": drivers_df,
+                "prior_amt": prior_amt,
+                "current_amt": current_amt,
+            }
+        )
+
+    action_plan_df = (
+        actions_sheet[["Priority", "Account", "Owner", "Task"]] if not actions_sheet.empty else pd.DataFrame()
+    )
+    tie_out_df = (
+        tie_out_sheet.rename(columns={"Account": "account_name", "Coverage %": "coverage_pct"})[
+            ["account_name", "coverage_pct"]
+        ]
+        if not tie_out_sheet.empty
+        else pd.DataFrame()
+    )
+
+    _render_variance_visuals(
+        prior_period=brief["prior_period"],
+        current_period=brief["current_period"],
+        metrics={
+            "Accounts analyzed": len(tie_out_sheet),
+            "Material findings": len(findings_sheet),
+            "Actions": len(actions_sheet),
+        },
+        findings=findings,
+        action_plan_df=action_plan_df,
+        tie_out_df=tie_out_df,
+        below_threshold_note=(
+            "No account moved enough this period to clear the materiality gate "
+            f"(±${config.MATERIALITY_ABS:,.0f}, or ±{config.MATERIALITY_PCT:.0%} on a balance over "
+            f"${config.MATERIALITY_FLOOR:,.0f}, or a {config.ANOMALY_Z}σ swing versus trailing history). "
+            "That's a clean close, not a failed run. The workbook only carries material findings, so no "
+            "below-threshold table is available for a seeded brief the way it is for a live upload."
+        ),
+    )
+
+    with st.expander("Full text output (analysis + actions)"):
+        col_analysis, col_actions = st.columns(2)
+        with col_analysis:
+            st.subheader("Analysis — what changed, why")
+            if brief["analysis_path"]:
+                st.text(brief["analysis_path"].read_text(encoding="utf-8"))
+            else:
+                st.info("No analysis output for this run.")
+        with col_actions:
+            st.subheader("Recommended actions — what to do next")
+            if brief["actions_path"]:
+                st.text(brief["actions_path"].read_text(encoding="utf-8"))
+            else:
+                st.info("No action-plan output for this run.")
 
     dl_cols = st.columns(3)
     if brief["xlsx_path"]:
