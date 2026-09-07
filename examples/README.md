@@ -9,7 +9,7 @@ deploying a model endpoint.
 | `flux_2026-07_to_2026-08_e3e64975.md` | The flagship variance brief: executive summary, a prioritized "Recommended actions" table, per-account findings with driver tables and cohort labels, and the subledger tie-out gap. Written by `app/flux/brief.py: markdown`. |
 | `flux_2026-07_to_2026-08_e3e64975.xlsx` | The matching workpaper for the same run — sheets `Summary`, `Actions`, `Findings`, `Drivers`, `Tie-Out`. Written by `app/flux/brief.py: _write_xlsx`. |
 | `flux_memory_graph.excerpt.json` | 4 of the 31 `account::driver` edges from `data/flux_memory_graph.json` after a full replay, hand-trimmed for the repo. See below. |
-| `upload_sample_summary.csv` / `upload_sample_transactions.csv` | A known-good pair for the flux page's "Analyze your own financials" panel: 2026-07 and 2026-08 of the seeded ledger concatenated into one file each. The seeded files under `data/financials/` are one period per file, so they are rejected as uploads on their own — an upload needs at least two `YYYY-MM` periods in the same file. |
+| `upload_sample_summary.csv` / `upload_sample_transactions.csv` | A known-good pair for the flux page's "Analyze your own financials" panel: 2026-07 and 2026-08 of the seeded ledger concatenated into one file each. A convenience only: the panel accepts any number of files and concatenates them per role, so the one-period-per-file originals under `data/financials/` work too if you add two periods' worth. |
 | `workpaper_INV-2001_38e95103.xlsx` | The AP pipeline's audit workpaper for `samples/invoices/INV-2001_northwind.txt` — sheets `Summary`, `Three-Way Match`, `Exceptions`, `Line Items`, `Source Document`. This is the invoice billed 990.00 over PO-5002. Written by `app/workpaper.py`. |
 
 ## Regenerating them

@@ -4,12 +4,13 @@ isolated flux run.
 `ingest.py` reads the committed synthetic dataset: pinned CSV globs, a fixed
 column typing, a memory ladder for OOM-safety across 20+ files, and periods
 that are trusted to already be well-formed because `data/seed_flux.py`
-produced them. None of that fits a file a CFO just dragged out of Excel --
+produced them. None of that fits files a CFO just dragged out of Excel --
 column names may be close-but-not-exact, periods may be spelled a dozen
-different ways, "amount" may carry currency formatting, and a bad file is a
-user-facing problem, not a stack trace. This module owns that boundary: it
-resolves which uploaded file is the summary and which is the subledger,
-coerces both into the exact shapes `ingest.py`'s callers already expect,
+different ways, "amount" may carry currency formatting, real exports are
+commonly one period per file, and a bad file is a user-facing problem, not a
+stack trace. This module owns that boundary: it buckets any number of
+uploaded files into summary vs. transaction subledger by column shape,
+coerces each into the exact shapes `ingest.py`'s callers already expect,
 raises `UploadError` with copy meant to be read by the person who uploaded
 the file, and hands back an in-memory DuckDB connection the existing graph
 (`app.flux.graph`) can run against unchanged via its `isolated=True` path --
@@ -24,7 +25,7 @@ instead of the committed globs.
 
 import re
 from pathlib import Path
-from typing import NamedTuple
+from typing import NamedTuple, Sequence, Union
 
 import duckdb
 import pandas as pd
@@ -59,6 +60,8 @@ _PAREN_NEG_RE = re.compile(r"^\((.*)\)$")
 # understood at all and every number downstream is suspect.
 _AMOUNT_FAILURE_THRESHOLD = 0.20
 
+PathOrPaths = Union[Path, Sequence[Path]]
+
 
 class UploadError(ValueError):
     """A validation failure whose message is meant to be shown to the uploader verbatim."""
@@ -73,9 +76,17 @@ class Prepared(NamedTuple):
     warnings: list[str]
 
 
+def _as_list(paths: PathOrPaths) -> list[Path]:
+    """Normalize the "single Path or a sequence of them" call convention that
+    `read_summary` / `read_transactions` / `prepare` all accept."""
+    if isinstance(paths, (str, Path)):
+        return [Path(paths)]
+    return list(paths)
+
+
 def _peek_columns(path: Path) -> set[str]:
-    """Just the header row -- resolve_roles needs column names, not data, to
-    tell the two uploaded files apart."""
+    """Just the header row -- group_by_role needs column names, not data, to
+    tell summary files apart from transaction files."""
     try:
         if path.suffix.lower() in (".xlsx", ".xls"):
             return set(pd.read_excel(path, nrows=0).columns)
@@ -84,27 +95,31 @@ def _peek_columns(path: Path) -> set[str]:
         raise UploadError(f"Could not read {path.name}: {exc}") from exc
 
 
-def resolve_roles(path_a: Path, path_b: Path) -> tuple[Path, Path]:
-    """(summary_path, txn_path), detected by columns rather than upload-slot order --
-    the two file pickers are easy to swap."""
-    cols_a, cols_b = _peek_columns(path_a), _peek_columns(path_b)
-    a_is_summary = "account_name" in cols_a
-    b_is_summary = "account_name" in cols_b
-    if a_is_summary and not b_is_summary:
-        return path_a, path_b
-    if b_is_summary and not a_is_summary:
-        return path_b, path_a
-    if a_is_summary and b_is_summary:
+def group_by_role(paths: Sequence[Path]) -> tuple[list[Path], list[Path]]:
+    """(summary_paths, txn_paths), detected by columns rather than upload
+    order or count -- any number of files can be dropped in, each one bucketed
+    by whether it has an 'account_name' column."""
+    summary_paths: list[Path] = []
+    txn_paths: list[Path] = []
+    for path in paths:
+        if "account_name" in _peek_columns(path):
+            summary_paths.append(path)
+        else:
+            txn_paths.append(path)
+
+    if not summary_paths:
         raise UploadError(
-            "Both uploaded files look like a period summary (both have an 'account_name' "
+            "None of the uploaded files look like a period summary (none has an 'account_name' "
+            "column). One of them should be the summary file, with 'period', 'account_code', "
+            "'account_name', and 'amount' columns."
+        )
+    if not txn_paths:
+        raise UploadError(
+            "Every uploaded file looks like a period summary (every one has an 'account_name' "
             "column). One of them should be the transaction subledger instead -- it needs "
             "'period', 'account_code', and 'amount' columns, but no 'account_name' column."
         )
-    raise UploadError(
-        "Neither uploaded file looks like a period summary (neither has an 'account_name' "
-        "column). One of them should be the summary file, with 'period', 'account_code', "
-        "'account_name', and 'amount' columns."
-    )
+    return summary_paths, txn_paths
 
 
 def _read_table(path: Path, required: list[str]) -> pd.DataFrame:
@@ -138,7 +153,8 @@ def _validate_periods(series: pd.Series, filename: str) -> None:
     """Hard requirement, not a style preference: variance.compute_variances calls
     ingest.shift_period(current_period, -12) unconditionally, and shift_period does
     `int(p) for p in period.split("-")` -- anything that isn't YYYY-MM blows up deep
-    inside the pipeline instead of at the upload boundary."""
+    inside the pipeline instead of at the upload boundary. Per-file, not
+    cross-file: this is a shape check on the one file being read."""
     bad = sorted(set(series[~series.str.match(_PERIOD_RE)]))
     if bad:
         offenders = ", ".join(repr(b) for b in bad[:5])
@@ -170,31 +186,16 @@ def _parse_amount(series: pd.Series, filename: str) -> pd.Series:
     return parsed.fillna(0.0)
 
 
-def read_summary(path: Path) -> pd.DataFrame:
-    """A period summary: one row per account per period."""
+def _read_summary_one(path: Path) -> pd.DataFrame:
+    """A period summary from a single file: one row per account per period.
+    Only per-file checks live here -- required columns, period shape, amount
+    parsing. Cross-file checks (>= 2 distinct periods, duplicate
+    (account_code, period) pairs) run once in `prepare`, after every uploaded
+    summary file has been concatenated together."""
     df = _read_table(path, ["period", "account_code", "account_name", "amount"])
 
     df["period"] = _normalize_period_series(df["period"])
     _validate_periods(df["period"], path.name)
-
-    distinct_periods = set(df["period"])
-    if len(distinct_periods) < 2:
-        raise UploadError(
-            f"{path.name} has only {len(distinct_periods)} distinct period(s). "
-            "A variance run compares two periods."
-        )
-
-    # Required, not cosmetic: variance.compute_variances builds
-    # `{r["account_code"]: r for r in ingest.get_summary(conn, period)}` -- a
-    # duplicate (account_code, period) pair would silently vanish, with only
-    # the last row surviving, and nothing would ever say so.
-    dupes = df[["account_code", "period"]][df.duplicated(["account_code", "period"], keep=False)]
-    if not dupes.empty:
-        pairs = sorted(set(dupes.itertuples(index=False, name=None)))
-        raise UploadError(
-            f"{path.name} has more than one row for the same account in the same period: "
-            f"{pairs}. Provide exactly one row per account per period."
-        )
 
     if "account_type" not in df.columns:
         df["account_type"] = "other"
@@ -208,8 +209,9 @@ def read_summary(path: Path) -> pd.DataFrame:
     return df[SUMMARY_COLUMNS]
 
 
-def read_transactions(path: Path) -> pd.DataFrame:
-    """The transaction-level subledger backing the summary's totals."""
+def _read_transactions_one(path: Path) -> pd.DataFrame:
+    """The transaction-level subledger from a single file. Per-file checks
+    only -- see `_read_summary_one`."""
     df = _read_table(path, ["period", "account_code", "amount"])
 
     df["period"] = _normalize_period_series(df["period"])
@@ -236,6 +238,60 @@ def read_transactions(path: Path) -> pd.DataFrame:
     return df[TXN_COLUMNS]
 
 
+def read_summary(paths: PathOrPaths) -> pd.DataFrame:
+    """Read and normalize one or more period-summary files, concatenated into
+    a single frame. Accepts a single Path or a sequence of them, so existing
+    single-file call sites keep working."""
+    frames = [_read_summary_one(p) for p in _as_list(paths)]
+    return pd.concat(frames, ignore_index=True)
+
+
+def read_transactions(paths: PathOrPaths) -> pd.DataFrame:
+    """Read and normalize one or more transaction-detail files, concatenated
+    into a single frame. Accepts a single Path or a sequence of them, so
+    existing single-file call sites keep working."""
+    frames = [_read_transactions_one(p) for p in _as_list(paths)]
+    return pd.concat(frames, ignore_index=True)
+
+
+def _validate_combined_summary(summary_df: pd.DataFrame) -> None:
+    """Cross-file checks that only make sense once every summary file the
+    uploader dropped in has been concatenated together."""
+    distinct_periods = sorted(set(summary_df["period"]))
+    if len(distinct_periods) < 2:
+        only = distinct_periods[0] if distinct_periods else "none"
+        raise UploadError(
+            f"The summary data covers only one period ({only}). Add the file for another "
+            "period -- a variance run compares two."
+        )
+
+    # Required, not cosmetic: variance.compute_variances builds
+    # `{r["account_code"]: r for r in ingest.get_summary(conn, period)}` -- a
+    # duplicate (account_code, period) pair would silently vanish, with only
+    # the last row surviving, and nothing would ever say so. Checking the
+    # concatenated frame (rather than per-file) also catches the very likely
+    # mistake of dropping the same file twice, or two files that overlap a
+    # period.
+    dupes = summary_df[["account_code", "period"]][
+        summary_df.duplicated(["account_code", "period"], keep=False)
+    ]
+    if not dupes.empty:
+        pairs = sorted(set(dupes.itertuples(index=False, name=None)))
+        periods = sorted({p for _, p in pairs})
+        # Lead with the likely cause, not the evidence. Dropping the same file
+        # twice duplicates every account in it, so the raw pair list can run to
+        # dozens of tuples -- enough to bury the one sentence that says what to
+        # do. Show a few and count the rest.
+        shown = ", ".join(f"{a} in {p}" for a, p in pairs[:3])
+        more = f", and {len(pairs) - 3} more" if len(pairs) > 3 else ""
+        raise UploadError(
+            f"The same account appears twice in the same period ({shown}{more}). "
+            f"That usually means a file was added twice, or two files overlap -- "
+            f"affected period(s): {', '.join(periods)}. The summary needs one row "
+            f"per account per period."
+        )
+
+
 def latest_two_periods(summary_df: pd.DataFrame) -> tuple[str, str]:
     """(prior_period, period): the last two periods actually present in the
     sorted distinct set. Deliberately not ingest.shift_period(period, -1) --
@@ -252,7 +308,7 @@ def build_conn(summary_df: pd.DataFrame, txn_df: pd.DataFrame) -> duckdb.DuckDBP
     Deliberately does not use ingest._MEMORY_LADDER: that ladder exists to
     keep `read_csv_auto` over a 20-file glob from OOMing DuckDB's
     auto-detected memory limit. There's no glob here -- the data is already a
-    bounded pair of in-memory DataFrames from one upload -- so there's nothing
+    bounded set of in-memory DataFrames from one upload -- so there's nothing
     for a memory ladder to protect against.
     """
     conn = duckdb.connect()
@@ -265,11 +321,19 @@ def build_conn(summary_df: pd.DataFrame, txn_df: pd.DataFrame) -> duckdb.DuckDBP
     return conn
 
 
-def prepare(path_a: Path, path_b: Path) -> Prepared:
-    """Validate and normalize both uploaded files and stage them for one graph run."""
-    summary_path, txn_path = resolve_roles(path_a, path_b)
-    summary_df = read_summary(summary_path)
-    txn_df = read_transactions(txn_path)
+def prepare(paths: Sequence[Path]) -> Prepared:
+    """Validate and normalize any number of uploaded files and stage them for
+    one graph run. Files are bucketed into summary vs. transaction by column
+    shape (`group_by_role`), each bucket is read and concatenated
+    (`read_summary` / `read_transactions`), and only then are the cross-file
+    checks -- at least two distinct periods, no duplicate (account_code,
+    period) pairs -- applied to the combined summary."""
+    paths = _as_list(paths)
+    summary_paths, txn_paths = group_by_role(paths)
+    summary_df = read_summary(summary_paths)
+    txn_df = read_transactions(txn_paths)
+
+    _validate_combined_summary(summary_df)
 
     prior_period, period = latest_two_periods(summary_df)
 
@@ -292,13 +356,14 @@ def prepare(path_a: Path, path_b: Path) -> Prepared:
     )
 
 
-def run(path_a: Path, path_b: Path) -> tuple[dict, Prepared]:
-    """The single call the UI makes: validate + stage the upload, then run one
-    isolated graph comparison over exactly the two periods present in the file
-    (never a shift_period(-1) guess). Isolated: no read from or write to the
-    seeded institutional memory, and no artifacts written to out/flux/ -- this
-    data has nothing to do with that ledger."""
-    prepared = prepare(path_a, path_b)
+def run(paths: Sequence[Path]) -> tuple[dict, Prepared]:
+    """The single call the UI makes: validate + stage any number of uploaded
+    files, then run one isolated graph comparison over exactly the two
+    latest periods present across the combined summary (never a
+    shift_period(-1) guess). Isolated: no read from or write to the seeded
+    institutional memory, and no artifacts written to out/flux/ -- this data
+    has nothing to do with that ledger."""
+    prepared = prepare(paths)
     try:
         state = graph.process_period(
             period=prepared.period,

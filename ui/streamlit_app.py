@@ -370,25 +370,24 @@ def _offer_sample_uploads():
 
 def _handle_flux_upload():
     st.caption(
-        "Two files: a period summary (`period, account_code, account_name, amount`) and a "
-        "transaction detail file (`period, account_code, amount`, plus `customer_id` or "
-        "`vendor`). **Each file needs at least two `YYYY-MM` periods in it** -- the latest two "
-        "present are compared. Drop both files in together in either order: `resolve_roles` "
-        "works out which is which from the columns, not from the order you added them."
+        "Add one file per period, or files that already span multiple periods -- e.g. drop "
+        "`2025-01.csv` and `2025-02.csv` summaries plus their two transaction files, four files "
+        "total. Each file needs a period summary shape (`period, account_code, account_name, "
+        "amount`) or a transaction detail shape (`period, account_code, amount`, plus "
+        "`customer_id` or `vendor`); `group_by_role` sorts out which is which from the columns, "
+        "not from upload order. The latest two periods across all the summary files combined are "
+        "compared."
     )
 
-    # The seeded dataset under data/financials/ is deliberately one period per
-    # file, so those files are NOT valid uploads on their own -- a single-period
-    # summary is rejected up front. Hand the user a working pair instead of
-    # pointing them at files that will bounce.
+    # Also offer a known-good pair for a no-hunting demo path.
     _offer_sample_uploads()
 
-    # One multi-file widget rather than two single-file slots: resolve_roles
-    # identifies the summary by its columns, so numbered slots implied an order
-    # that never mattered -- and a single-file uploader gives no affordance for
-    # adding the second file, which read as a broken control.
+    # One multi-file widget rather than fixed slots: group_by_role identifies
+    # summary vs. transaction files by their columns, and any number of files
+    # can be dropped in -- numbered slots would imply an order and a count
+    # that never mattered.
     uploaded = st.file_uploader(
-        "Summary + transaction detail (add both)",
+        "Summary + transaction detail (add as many files as you need)",
         type=["csv", "xlsx"],
         accept_multiple_files=True,
         key="flux_upload_files",
@@ -397,13 +396,7 @@ def _handle_flux_upload():
     if len(uploaded) < 2:
         if uploaded:
             # Say so rather than sitting inert -- one file looks like a hang.
-            st.info(f"Got **{uploaded[0].name}**. Add the second file to run the agent.")
-        return
-    if len(uploaded) > 2:
-        st.error(
-            f"Add exactly two files -- one period summary and one transaction detail file. "
-            f"You added {len(uploaded)}."
-        )
+            st.info(f"Got **{uploaded[0].name}**. Add at least one more file to run the agent.")
         return
 
     if not st.button("Run the variance agent on these files", key="flux_run_upload", type="primary"):
@@ -415,12 +408,10 @@ def _handle_flux_upload():
         dest = config.UPLOADS_DIR / f"{uuid.uuid4().hex[:8]}_{item.name}"
         dest.write_bytes(item.getvalue())
         saved.append(dest)
-    dest_a, dest_b = saved
-    file_a, file_b = uploaded
 
     with st.spinner("Comparing periods, slicing drivers, and drafting the action plan..."):
         try:
-            state, prepared = flux_uploads.run(dest_a, dest_b)
+            state, prepared = flux_uploads.run(saved)
         except flux_uploads.UploadError as exc:
             st.error(str(exc))
             return
@@ -441,7 +432,7 @@ def _handle_flux_upload():
         "warnings": prepared.warnings,
         "summary_rows": prepared.summary_rows,
         "txn_rows": prepared.txn_rows,
-        "names": (file_a.name, file_b.name),
+        "names": tuple(item.name for item in uploaded),
         "md": flux_brief.markdown(state),
         "analysis": flux_brief.analysis_text(state),
         "actions": flux_brief.actions_text(state),
@@ -453,9 +444,13 @@ def _handle_flux_upload():
 def _render_upload_result(entry):
     state = entry["state"]
     prior, period = entry["prior_period"], entry["period"]
-    name_a, name_b = entry["names"]
+    names = entry["names"]
+    if len(names) <= 3:
+        files_desc = " + ".join(names)
+    else:
+        files_desc = f"{len(names)} files ({', '.join(names)})"
 
-    st.success(f"Compared {prior} → {period} from {name_a} + {name_b}.")
+    st.success(f"Compared {prior} → {period} from {files_desc}.")
     st.caption("Isolated run — nothing was written to the agent's institutional memory or to out/flux/.")
 
     for warning in entry.get("warnings") or []:

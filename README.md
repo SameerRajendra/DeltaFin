@@ -151,12 +151,16 @@ downloadable artifacts. Those runs are **isolated** — an uploaded company's da
 never read into, or written into, the institutional memory built from the seeded
 ledger (`app/flux/uploads.py`).
 
-Each uploaded file must carry **at least two `YYYY-MM` periods**; the latest two
-present are compared. Note the seeded files under `data/financials/` are one
-period per file and so are *not* valid uploads on their own —
+Add as many files as you like, in any order — each is sorted into "summary" or
+"transaction detail" by its columns, files of the same kind are concatenated, and
+the **latest two `YYYY-MM` periods** across the result are compared. So one file
+per period works (drop `2025-01.csv` and `2025-02.csv` from both
+`data/financials/summaries/` and `data/financials/transactions/`), and so does a
+single file already spanning several months. The only hard requirement is two
+distinct periods in total, and at least one file of each kind.
 [`examples/upload_sample_summary.csv`](examples/upload_sample_summary.csv) and
 [`examples/upload_sample_transactions.csv`](examples/upload_sample_transactions.csv)
-are a known-good pair (2026-07 + 2026-08), and the panel offers them for download
+are a ready-made pair (2026-07 + 2026-08); the panel offers them for download
 directly.
 
 `python run_flux.py 2026-08` runs a single comparison instead. The seeded
