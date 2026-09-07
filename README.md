@@ -154,10 +154,19 @@ ledger (`app/flux/uploads.py`).
 Add as many files as you like, in any order — each is sorted into "summary" or
 "transaction detail" by its columns, files of the same kind are concatenated, and
 the **latest two `YYYY-MM` periods** across the result are compared. So one file
-per period works (drop `2025-01.csv` and `2025-02.csv` from both
+per period works (drop `2026-07.csv` and `2026-08.csv` from both
 `data/financials/summaries/` and `data/financials/transactions/`), and so does a
 single file already spanning several months. The only hard requirement is two
 distinct periods in total, and at least one file of each kind.
+
+Pick your periods deliberately if you're demoing: 5 of the 19 comparisons in the
+seeded dataset have **nothing** above the materiality gate — including the first
+three (`2025-01`→`02`, `02`→`03`, `03`→`04`), which are the files you'd grab
+first. That is a real result, not a failure, and the page says so and still shows
+the tie-out gaps, the action plan and the largest sub-threshold movements. But
+`2026-07`→`2026-08` is the one with the story: a 32% enterprise-revenue jump
+concentrated in three customers, the recurring hosting overrun, and the
+August-only conference sponsorship.
 [`examples/upload_sample_summary.csv`](examples/upload_sample_summary.csv) and
 [`examples/upload_sample_transactions.csv`](examples/upload_sample_transactions.csv)
 are a ready-made pair (2026-07 + 2026-08); the panel offers them for download

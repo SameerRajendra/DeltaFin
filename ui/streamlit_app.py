@@ -423,12 +423,35 @@ def _render_variance_visuals(*, prior_period, current_period, metrics, findings,
         col.metric(label, value)
 
     if not findings:
+        # No early return. A period with nothing material still carries the
+        # action plan and the tie-out -- and in this dataset it always does,
+        # because a summary-only accrual is a P1 whether or not it moved.
+        # Returning here hid the single actionable item on the page and made a
+        # legitimately quiet close look like a broken run.
         st.info(below_threshold_note or "No material variances this period.")
         if below_threshold_df is not None and not below_threshold_df.empty:
             st.caption("Largest movements below the threshold")
             st.dataframe(below_threshold_df, hide_index=True, use_container_width=True)
-        return
+    else:
+        _render_findings_section(findings)
 
+    st.subheader("Recommended actions")
+    if action_plan_df is not None and not action_plan_df.empty:
+        st.dataframe(action_plan_df, hide_index=True, use_container_width=True)
+    else:
+        st.caption("No actions generated this period.")
+
+    st.subheader("Subledger tie-out")
+    tie_chart = charts.tie_out_chart(tie_out_df)
+    if tie_chart is not None:
+        st.altair_chart(tie_chart, use_container_width=True)
+    else:
+        st.caption("No tie-out data available for this run.")
+
+
+def _render_findings_section(findings):
+    """Account movement overview plus a per-account expander with its bridge,
+    driver bars, and the model's narrative."""
     st.subheader("Account movement overview")
     st.caption("Every material finding this period, by delta. Color is priority, not direction.")
     movement_df = pd.DataFrame(
@@ -460,19 +483,6 @@ def _render_variance_visuals(*, prior_period, current_period, metrics, findings,
                 st.caption("No subledger driver detail available for this account.")
             st.markdown(f["why"])
 
-    st.subheader("Recommended actions")
-    if action_plan_df is not None and not action_plan_df.empty:
-        st.dataframe(action_plan_df, hide_index=True, use_container_width=True)
-    else:
-        st.caption("No actions generated this period.")
-
-    st.subheader("Subledger tie-out")
-    tie_chart = charts.tie_out_chart(tie_out_df)
-    if tie_chart is not None:
-        st.altair_chart(tie_chart, use_container_width=True)
-    else:
-        st.caption("No tie-out data available for this run.")
-
 
 _SAMPLE_UPLOADS = (
     ("Sample summary (.csv)", "upload_sample_summary.csv", "flux_sample_summary"),
@@ -491,7 +501,12 @@ def _offer_sample_uploads():
     available = [(label, root / name, key) for label, name, key in _SAMPLE_UPLOADS if (root / name).exists()]
     if len(available) != len(_SAMPLE_UPLOADS):
         return
-    st.caption("No data handy? Download this pair and upload them straight back:")
+    st.caption(
+        "No data handy? Download this pair and upload them straight back -- they cover "
+        "2026-07 to 2026-08, the comparison with the most to find. (Several period pairs "
+        "in the seeded data have nothing above the materiality gate; that is a real "
+        "result, but it makes for a quiet demo.)"
+    )
     cols = st.columns(len(available))
     for col, (label, path, key) in zip(cols, available):
         col.download_button(
