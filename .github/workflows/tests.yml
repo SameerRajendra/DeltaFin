@@ -31,5 +31,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-dev.txt
 
+      # ui/ has no test coverage -- it needs a browser -- so a NameError from a
+      # refactor there reaches production silently: py_compile does not resolve
+      # global names, and pytest never imports the Streamlit page. That is
+      # exactly how a broken _render_findings_section shipped. F821 catches it
+      # statically, in the one place that would have caught it for free.
+      - name: Lint for undefined and duplicate names
+        run: ruff check --select F821,F811 app ui tests evals data modal_app run_flux.py run_demo.py
+
       - name: Run Tier 0 tests
         run: pytest tests -q

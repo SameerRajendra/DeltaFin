@@ -433,7 +433,7 @@ def _render_variance_visuals(*, prior_period, current_period, metrics, findings,
             st.caption("Largest movements below the threshold")
             st.dataframe(below_threshold_df, hide_index=True, use_container_width=True)
     else:
-        _render_findings_section(findings)
+        _render_findings_section(findings, prior_period, current_period)
 
     st.subheader("Recommended actions")
     if action_plan_df is not None and not action_plan_df.empty:
@@ -449,9 +449,15 @@ def _render_variance_visuals(*, prior_period, current_period, metrics, findings,
         st.caption("No tie-out data available for this run.")
 
 
-def _render_findings_section(findings):
+def _render_findings_section(findings, prior_period, current_period):
     """Account movement overview plus a per-account expander with its bridge,
-    driver bars, and the model's narrative."""
+    driver bars, and the model's narrative.
+
+    Takes the two periods explicitly: this body was extracted out of
+    _render_variance_visuals, where they were in scope as parameters, and
+    reading them as globals raised NameError at render time -- invisible to
+    py_compile and to a test suite that never exercises the UI.
+    """
     st.subheader("Account movement overview")
     st.caption("Every material finding this period, by delta. Color is priority, not direction.")
     movement_df = pd.DataFrame(

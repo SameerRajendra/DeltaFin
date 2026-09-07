@@ -81,14 +81,35 @@ image = (
 llm_secret = modal.Secret.from_name("deltafin-hosted-llm")
 
 
-@app.function(image=image, secrets=[llm_secret], scaledown_window=300)
+# max_containers=1 is load-bearing, not a cost tweak. Streamlit keeps session
+# state, the file-uploader's pending-upload registry, and the MediaFileManager
+# that backs st.download_button all in memory in ONE process. Spread across two
+# replicas and the browser's follow-up requests land on a container that has
+# never heard of them: the upload POST to /_stcore/upload_file/<session_id>/...
+# 400s, and the /media/<hash> GET behind a download button 404s. Both were
+# observed in the browser console before this was pinned. A Streamlit app cannot
+# be horizontally scaled without external session storage, so one container it is.
+#
+# modal.concurrent then lets that single container serve the many parallel
+# requests one page load needs (websocket + XHR + static assets) instead of
+# queueing them one at a time.
+@app.function(image=image, secrets=[llm_secret], scaledown_window=300, max_containers=1)
+@modal.concurrent(max_inputs=100)
 @modal.web_server(port=8501, startup_timeout=60)
 def serve():
     import subprocess
 
     subprocess.Popen(
+        # XSRF protection off deliberately: Streamlit's XSRF cookie does not
+        # reliably round-trip through Modal's proxy, and the file uploader then
+        # rejects every POST with a 400 regardless of which container serves it.
+        # CORS is disabled alongside it because Streamlit treats the two as a
+        # pair and warns when only one is off. This is a public, read-mostly
+        # demo with no credentials entered through the page, so the exposure is
+        # a stranger POSTing a CSV -- which the upload panel already invites.
         "streamlit run ui/streamlit_app.py "
         "--server.port 8501 --server.address 0.0.0.0 --server.headless true "
+        "--server.enableXsrfProtection false --server.enableCORS false "
         "--browser.gatherUsageStats false",
         shell=True,
         cwd="/root/app",
