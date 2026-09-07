@@ -14,6 +14,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app import config, store  # noqa: E402
 from app import graph as ap_graph  # noqa: E402
 from app.flux import memory as flux_memory  # noqa: E402
+from app.flux import uploads as flux_uploads  # noqa: E402
+from app.flux import brief as flux_brief  # noqa: E402
 
 SEVERITY_COLOR = {
     "critical": "#c0392b",
@@ -337,15 +339,160 @@ def _flux_feedback_section(brief):
             st.divider()
 
 
+def _handle_flux_upload():
+    st.caption(
+        "Two files: a period summary (`period, account_code, account_name, amount`) and a "
+        "transaction detail file (`period, account_code, amount`, plus `customer_id` or "
+        "`vendor`). Each needs at least two `YYYY-MM` periods -- the latest two present are "
+        "compared. `resolve_roles` sniffs which file is which by its columns, so File 1 / "
+        "File 2 order genuinely doesn't matter. See `data/financials/` for the expected shape."
+    )
+    file_a = st.file_uploader("File 1", type=["csv", "xlsx"], key="flux_upload_a")
+    file_b = st.file_uploader("File 2", type=["csv", "xlsx"], key="flux_upload_b")
+    if file_a is None or file_b is None:
+        return
+    if not st.button("Run the variance agent on these files", key="flux_run_upload", type="primary"):
+        return
+
+    config.UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    dest_a = config.UPLOADS_DIR / f"{uuid.uuid4().hex[:8]}_{file_a.name}"
+    dest_a.write_bytes(file_a.getvalue())
+    dest_b = config.UPLOADS_DIR / f"{uuid.uuid4().hex[:8]}_{file_b.name}"
+    dest_b.write_bytes(file_b.getvalue())
+
+    with st.spinner("Comparing periods, slicing drivers, and drafting the action plan..."):
+        try:
+            state, prepared = flux_uploads.run(dest_a, dest_b)
+        except flux_uploads.UploadError as exc:
+            st.error(str(exc))
+            return
+        except Exception as exc:  # noqa: BLE001 -- surface any failure to the uploader, don't crash the page
+            st.error(f"Upload run failed: {exc}")
+            return
+
+    # Render once, here, and stash everything the render needs in session state.
+    # st.download_button triggers a rerun when clicked; a result held only in a
+    # local inside this `if st.button(...)` block would vanish on the first
+    # download click, mid-demo. No st.rerun() here -- the block below picks up
+    # this session key in the same pass, and a rerun would throw away the frame
+    # we just computed (unlike the AP handler, which reruns to re-read SQLite).
+    st.session_state["flux_upload"] = {
+        "state": state,
+        "prior_period": prepared.prior_period,
+        "period": prepared.period,
+        "warnings": prepared.warnings,
+        "summary_rows": prepared.summary_rows,
+        "txn_rows": prepared.txn_rows,
+        "names": (file_a.name, file_b.name),
+        "md": flux_brief.markdown(state),
+        "analysis": flux_brief.analysis_text(state),
+        "actions": flux_brief.actions_text(state),
+        "xlsx": flux_brief.workbook_bytes(state),
+        "stem": f"flux_{prepared.prior_period}_to_{prepared.period}_{state.get('run_id')}",
+    }
+
+
+def _render_upload_result(entry):
+    state = entry["state"]
+    prior, period = entry["prior_period"], entry["period"]
+    name_a, name_b = entry["names"]
+
+    st.success(f"Compared {prior} → {period} from {name_a} + {name_b}.")
+    st.caption("Isolated run — nothing was written to the agent's institutional memory or to out/flux/.")
+
+    for warning in entry.get("warnings") or []:
+        st.warning(warning)
+
+    metric_cols = st.columns(3)
+    metric_cols[0].metric("Accounts analyzed", len(state.get("variances", [])))
+    metric_cols[1].metric("Material findings", len(state.get("findings", [])))
+    metric_cols[2].metric("Actions", len(state.get("action_plan", [])))
+
+    if not state.get("findings"):
+        st.info(
+            f"No account moved enough between {prior} and {period} to clear the materiality gate — "
+            f"±${config.MATERIALITY_ABS:,.0f}, or ±{config.MATERIALITY_PCT:.0%} on a balance over "
+            f"${config.MATERIALITY_FLOOR:,.0f}, or a {config.ANOMALY_Z}σ swing versus the account's own "
+            f"trailing history. That's a clean close, not a failed run."
+        )
+        variances = state.get("variances") or []
+        if variances:
+            top = sorted(variances, key=lambda v: abs(v["delta"]), reverse=True)[:5]
+            rows = [
+                {
+                    "Account": v["account_name"],
+                    "Delta": v["delta"],
+                    "Pct": "new" if v["pct"] == float("inf") else f"{v['pct'] * 100:+.1f}%",
+                }
+                for v in top
+            ]
+            st.caption("Largest movements below the threshold")
+            st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+
+    col_analysis, col_actions = st.columns(2)
+    with col_analysis:
+        st.subheader("Analysis — what changed, why")
+        st.text(entry["analysis"])
+    with col_actions:
+        st.subheader("Recommended actions — what to do next")
+        st.text(entry["actions"])
+
+    stem = entry["stem"]
+    dl_cols = st.columns(4)
+    dl_cols[0].download_button(
+        "Brief (.md)",
+        data=entry["md"],
+        file_name=f"{stem}.md",
+        mime="text/markdown",
+        key="flux_dl_md",
+    )
+    dl_cols[1].download_button(
+        "Workpaper (.xlsx)",
+        data=entry["xlsx"],
+        file_name=f"{stem}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="flux_dl_xlsx",
+    )
+    dl_cols[2].download_button(
+        "Analysis (.txt)",
+        data=entry["analysis"],
+        file_name=f"{stem}_analysis.txt",
+        mime="text/plain",
+        key="flux_dl_analysis",
+    )
+    dl_cols[3].download_button(
+        "Actions (.txt)",
+        data=entry["actions"],
+        file_name=f"{stem}_actions.txt",
+        mime="text/plain",
+        key="flux_dl_actions",
+    )
+
+    with st.expander("Full brief (driver tables, tie-out gaps)"):
+        st.markdown(entry["md"])
+
+    if st.button("Clear result", key="flux_clear_upload"):
+        st.session_state.pop("flux_upload", None)
+        st.rerun()
+
+
 def flux_page():
     st.title("Variance Explanation Agent")
     st.caption("What changed, why, and what's driving it — with intuition that compounds across runs")
 
     briefs = _flux_briefs()
+
+    with st.expander("Analyze your own financials (upload two CSVs)", expanded=not briefs):
+        _handle_flux_upload()
+
+    if "flux_upload" in st.session_state:
+        _render_upload_result(st.session_state["flux_upload"])
+        st.divider()
+
     if not briefs:
-        st.error(
-            "No variance briefs found. Run `python data/seed_flux.py` then "
-            "`python run_flux.py` (or `python run_flux.py --replay`)."
+        st.info(
+            "No pre-computed briefs yet. Upload two CSVs above, or run "
+            "`python data/seed_flux.py` then `python run_flux.py --replay`."
         )
         return
 

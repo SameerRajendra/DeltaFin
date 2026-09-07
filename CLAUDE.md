@@ -26,6 +26,10 @@ Variance agent:
 - `app/flux/memory.py` — cross-run memory: JSON `account::driver` graph + append-only SQLite history
 - `app/flux/actions.py` — priority and owner assignment
 - `app/flux/brief.py` — markdown brief, `.xlsx` workpaper, and the two `.txt` exports
+- `app/flux/uploads.py` — normalizes and validates two arbitrary uploaded CSVs into the
+  `summary`/`txn` tables the pipeline expects, then runs one **isolated** comparison
+  (`graph.build_graph(..., isolated=True)`): no memory read, no memory write, no `out/flux/`
+  artifacts. Uploaded data must never enter the institutional history.
 - `data/seed_flux.py` — the deterministic 20-month synthetic ledger
 - `run_flux.py` — one period comparison, or `--replay` over all of them
 

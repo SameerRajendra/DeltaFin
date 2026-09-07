@@ -6,7 +6,7 @@ deploying a model endpoint.
 
 | File | What it is |
 |---|---|
-| `flux_2026-07_to_2026-08_e3e64975.md` | The flagship variance brief: executive summary, a prioritized "Recommended actions" table, per-account findings with driver tables and cohort labels, and the subledger tie-out gap. Written by `app/flux/brief.py: _markdown`. |
+| `flux_2026-07_to_2026-08_e3e64975.md` | The flagship variance brief: executive summary, a prioritized "Recommended actions" table, per-account findings with driver tables and cohort labels, and the subledger tie-out gap. Written by `app/flux/brief.py: markdown`. |
 | `flux_2026-07_to_2026-08_e3e64975.xlsx` | The matching workpaper for the same run — sheets `Summary`, `Actions`, `Findings`, `Drivers`, `Tie-Out`. Written by `app/flux/brief.py: _write_xlsx`. |
 | `flux_memory_graph.excerpt.json` | 4 of the 31 `account::driver` edges from `data/flux_memory_graph.json` after a full replay, hand-trimmed for the repo. See below. |
 | `workpaper_INV-2001_38e95103.xlsx` | The AP pipeline's audit workpaper for `samples/invoices/INV-2001_northwind.txt` — sheets `Summary`, `Three-Way Match`, `Exceptions`, `Line Items`, `Source Document`. This is the invoice billed 990.00 over PO-5002. Written by `app/workpaper.py`. |

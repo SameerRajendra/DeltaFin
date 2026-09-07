@@ -1,6 +1,7 @@
 """Render the variance-explanation agent's output: a markdown executive brief
 plus an evidence workpaper (.xlsx) with the full drill-down trail."""
 
+import io
 from datetime import datetime, timezone
 
 from openpyxl import Workbook
@@ -35,7 +36,7 @@ def _autosize(sheet, max_width=60):
         sheet.column_dimensions[get_column_letter(column[0].column)].width = min(width + 3, max_width)
 
 
-def _markdown(state) -> str:
+def markdown(state) -> str:
     lines = [
         f"# Variance Explanation Brief: {state['prior_period']} -> {state['period']}",
         "",
@@ -187,7 +188,19 @@ def _write_xlsx(state, path):
     wb.save(path)
 
 
-def _analysis_text(state) -> str:
+def workbook_bytes(state) -> bytes:
+    """The same .xlsx `build()` writes, as bytes.
+
+    For a caller with no directory to write to -- an isolated upload run
+    streams the workbook straight to the browser instead of landing it in
+    out/flux/. openpyxl's Workbook.save() accepts any file-like object.
+    """
+    buffer = io.BytesIO()
+    _write_xlsx(state, buffer)
+    return buffer.getvalue()
+
+
+def analysis_text(state) -> str:
     """Plain-text rendering of just the LLM's what-changed/why analysis --
     no action items, no driver tables. Meant to be readable on its own."""
     lines = [
@@ -218,7 +231,7 @@ def _analysis_text(state) -> str:
     return "\n".join(lines)
 
 
-def _actions_text(state) -> str:
+def actions_text(state) -> str:
     """Plain-text rendering of just the next-task output -- what to do about
     the analysis above, one prioritized, owned item at a time."""
     plan = state.get("action_plan") or []
@@ -246,10 +259,10 @@ def build(state) -> dict:
     analysis_path = config.FLUX_OUT_DIR / f"{stem}_analysis.txt"
     actions_path = config.FLUX_OUT_DIR / f"{stem}_actions.txt"
 
-    md_path.write_text(_markdown(state), encoding="utf-8")
+    md_path.write_text(markdown(state), encoding="utf-8")
     _write_xlsx(state, xlsx_path)
-    analysis_path.write_text(_analysis_text(state), encoding="utf-8")
-    actions_path.write_text(_actions_text(state), encoding="utf-8")
+    analysis_path.write_text(analysis_text(state), encoding="utf-8")
+    actions_path.write_text(actions_text(state), encoding="utf-8")
 
     return {
         "brief_path": str(md_path),

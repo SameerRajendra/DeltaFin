@@ -144,6 +144,13 @@ python run_flux.py --replay   # every period oldest-first, so memory accumulates
 streamlit run ui/streamlit_app.py
 ```
 
+**Or bring your own numbers.** The flux page has an "Analyze your own financials"
+panel: drop in a period summary and a transaction subledger (each covering at
+least two `YYYY-MM` periods) and it runs the same graph over them, returning the
+analysis, the prioritized action plan, and downloadable artifacts. Those runs are
+**isolated** — an uploaded company's data is never read into, or written into, the
+institutional memory built from the seeded ledger (`app/flux/uploads.py`).
+
 `python run_flux.py 2026-08` runs a single comparison instead. The seeded
 dataset has planted stories to find (`data/seed_flux.py` names them in its
 docstring): a 32% enterprise-revenue jump concentrated in three customers, a

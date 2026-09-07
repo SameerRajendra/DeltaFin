@@ -189,7 +189,7 @@ def _template_finding(drilldown, state) -> dict:
     return {"headline": headline, "why": why, "action": action}
 
 
-def build_graph(llm=None, conn=None):
+def build_graph(llm=None, conn=None, isolated=False):
     """`conn` is a single DuckDB connection shared by every node in one graph run.
 
     Opening a fresh connection per node (each one re-globbing and re-registering
@@ -198,6 +198,13 @@ def build_graph(llm=None, conn=None):
     between many short-lived connections in one long-running process, and it
     OOMs partway through. One connection per `process_period()` call fixes that
     and is simply less I/O.
+
+    `isolated=True` suppresses all three institutional side-effects: the memory
+    graph is not read (recall runs against an empty graph instead), nothing is
+    persisted to memory, and no artifacts are written to out/flux/. The caller
+    gets the returned state back and renders it itself. This exists for ad-hoc
+    uploads of data that has nothing to do with this ledger -- a one-off run
+    that must not read from or write into the seeded institutional history.
     """
     conn = conn or ingest.connect()
 
@@ -226,7 +233,7 @@ def build_graph(llm=None, conn=None):
         return {"drilldowns": drilldowns}
 
     def recall_memory_node(state: FluxState) -> dict[str, Any]:
-        graph = memory.load_graph()
+        graph = {"edges": {}} if isolated else memory.load_graph()
         drilldowns = []
         for d in state["drilldowns"]:
             slice_ = d["slice"]
@@ -314,15 +321,19 @@ def build_graph(llm=None, conn=None):
         return {"brief_text": header + findings_text}
 
     def persist_memory_node(state: FluxState) -> dict[str, Any]:
-        conn = memory.connect()
+        if isolated:
+            return {}
+        mem_conn = memory.connect()
         graph = memory.load_graph()
         try:
-            memory.persist_findings(conn, graph, state["period"], state["prior_period"], state["run_id"], state["findings"])
+            memory.persist_findings(mem_conn, graph, state["period"], state["prior_period"], state["run_id"], state["findings"])
         finally:
-            conn.close()
+            mem_conn.close()
         return {}
 
     def render_artifacts(state: FluxState) -> dict[str, Any]:
+        if isolated:
+            return {}
         paths = brief_module.build(state)
         return paths
 
@@ -352,7 +363,7 @@ def build_graph(llm=None, conn=None):
     return builder.compile()
 
 
-def process_period(period=None, prior_period=None, conn=None):
+def process_period(period=None, prior_period=None, conn=None, isolated=False):
     """Run one period comparison through the graph.
 
     Pass `conn` (a shared `ingest.connect()`) when running many comparisons back
@@ -363,7 +374,7 @@ def process_period(period=None, prior_period=None, conn=None):
     owns_conn = conn is None
     conn = conn or ingest.connect()
 
-    graph = build_graph(llm=llm_module.get_llm(), conn=conn)
+    graph = build_graph(llm=llm_module.get_llm(), conn=conn, isolated=isolated)
     try:
         return graph.invoke({"run_id": run_id, "period": period, "prior_period": prior_period})
     finally:
