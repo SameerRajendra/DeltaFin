@@ -6,8 +6,9 @@ deploying a model endpoint.
 
 | File | What it is |
 |---|---|
-| `flux_2026-07_to_2026-08_e3e64975.md` | The flagship variance brief: executive summary, a prioritized "Recommended actions" table, per-account findings with driver tables and cohort labels, and the subledger tie-out gap. Written by `app/flux/brief.py: markdown`. |
-| `flux_2026-07_to_2026-08_e3e64975.xlsx` | The matching workpaper for the same run — sheets `Summary`, `Actions`, `Findings`, `Drivers`, `Tie-Out`. Written by `app/flux/brief.py: _write_xlsx`. |
+| `flux_2026-07_to_2026-08_9cc000e5.md` | The flagship variance brief: executive summary, a prioritized "Recommended actions" table, per-account findings with driver tables and cohort labels, and the subledger tie-out gap. Written by `app/flux/brief.py: markdown`. |
+| `flux_2026-07_to_2026-08_9cc000e5.xlsx` | The matching workpaper for the same run — sheets `Summary`, `Actions`, `Findings`, `Drivers`, `Tie-Out`. Written by `app/flux/brief.py: _write_xlsx`. |
+| `flux_2026-07_to_2026-08_9cc000e5_analysis.txt` / `..._actions.txt` | The two plain-text sidecars `brief.build()` writes alongside the markdown — the analysis on its own, and the prioritized action list on its own. These are what the flux page's two panels render. |
 | `flux_memory_graph.excerpt.json` | 4 of the 31 `account::driver` edges from `data/flux_memory_graph.json` after a full replay, hand-trimmed for the repo. See below. |
 | `upload_sample_summary.csv` / `upload_sample_transactions.csv` | A known-good pair for the flux page's "Analyze your own financials" panel: 2026-07 and 2026-08 of the seeded ledger concatenated into one file each. A convenience only: the panel accepts any number of files and concatenates them per role, so the one-period-per-file originals under `data/financials/` work too if you add two periods' worth. |
 | `workpaper_INV-2001_38e95103.xlsx` | The AP pipeline's audit workpaper for `samples/invoices/INV-2001_northwind.txt` — sheets `Summary`, `Three-Way Match`, `Exceptions`, `Line Items`, `Source Document`. This is the invoice billed 990.00 over PO-5002. Written by `app/workpaper.py`. |
@@ -31,17 +32,20 @@ python data/seed.py
 python run_demo.py
 ```
 
-The `e3e64975` / `38e95103` suffixes are per-run ids (`uuid4().hex[:8]`), so a
+The `9cc000e5` / `38e95103` suffixes are per-run ids (`uuid4().hex[:8]`), so a
 re-run writes the same content under a different filename. The narrative prose
 also comes from the model, so it is not byte-identical run to run; the numbers,
 driver tables, priorities, and owners are computed deterministically and are.
 
 ## Notes on the artifacts
 
-**The two sidecar exports are missing for this stem.** `brief.build()` also
-writes `<stem>_analysis.txt` and `<stem>_actions.txt`; those were added after
-this particular run, so they do not exist for `e3e64975`. A current run emits
-all four files.
+**Insurance ranks last here, deliberately.** It is 0% traced to subledger detail
+in every period, and an earlier version of `actions.gap_priority` judged on
+coverage alone — so a $5,000 accrual that has not moved in twenty periods came
+back P1 every month and topped this table, above a $96,000 revenue swing. Gap
+priority now scales with the money behind the gap, so it sits at P2 below the
+real movers. The same account correctly returns to P1 in `2026-05`, the month its
+gap is genuinely $30,000.
 
 **The memory-graph excerpt.** The full file is gitignored (it is state, not
 source) and is rewritten by `memory.save_graph` on every run. The four edges

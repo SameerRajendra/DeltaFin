@@ -224,24 +224,33 @@ def tie_out_chart(tie_out: pd.DataFrame):
     if tie_out is None or tie_out.empty:
         return None
     df = tie_out.copy()
+    # Chart the UNCOVERED share, not coverage. On a coverage axis the account
+    # that needs attention is the one with no bar -- a summary-only accrual at
+    # 0% renders as nothing while every reconciled account is a full bar, so
+    # the eye is drawn to everything except the problem. Inverted, the worst
+    # account is the longest bar and a clean tie-out is an empty chart.
+    df["uncovered_pct"] = (100.0 - df["coverage_pct"]).clip(lower=0.0)
     df["status"] = df["coverage_pct"].apply(lambda p: "ok" if p >= 99.9 else "gap")
-    order = df.sort_values("coverage_pct", ascending=True)["account_name"].tolist()
+    order = df.sort_values("uncovered_pct", ascending=False)["account_name"].tolist()
     status_scale = alt.Scale(domain=["ok", "gap"], range=[INCREASE_COLOR, DECREASE_COLOR])
-    max_x = max(100.0, float(df["coverage_pct"].max()))
 
     bars = alt.Chart(df).mark_bar().encode(
         y=alt.Y("account_name:N", sort=order, title=None),
-        x=alt.X("coverage_pct:Q", title="Subledger coverage (%)", scale=alt.Scale(domain=[0, max_x])),
+        x=alt.X(
+            "uncovered_pct:Q",
+            title="Unreconciled share of the summary balance (%)",
+            scale=alt.Scale(domain=[0, 100]),
+        ),
         color=alt.Color("status:N", scale=status_scale, legend=None),
         tooltip=[
             alt.Tooltip("account_name:N", title="Account"),
-            alt.Tooltip("coverage_pct:Q", title="Coverage %", format=".1f"),
+            alt.Tooltip("coverage_pct:Q", title="Traced to subledger %", format=".1f"),
+            alt.Tooltip("uncovered_pct:Q", title="Unreconciled %", format=".1f"),
         ],
     )
-    labels = alt.Chart(df).mark_text(align="left", dx=3).encode(
+    labels = alt.Chart(df[df["uncovered_pct"] > 0]).mark_text(align="left", dx=3).encode(
         y=alt.Y("account_name:N", sort=order),
-        x=alt.X("coverage_pct:Q"),
-        text=alt.Text("coverage_pct:Q", format=".0f"),
+        x=alt.X("uncovered_pct:Q"),
+        text=alt.Text("uncovered_pct:Q", format=".0f"),
     )
-    rule = alt.Chart(pd.DataFrame({"x": [100]})).mark_rule(strokeDash=[4, 4]).encode(x=alt.X("x:Q"))
-    return (bars + rule + labels).properties(title="Subledger tie-out coverage")
+    return (bars + labels).properties(title="Subledger tie-out — unreconciled share")

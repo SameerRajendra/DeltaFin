@@ -1,0 +1,30 @@
+VARIANCE ANALYSIS: 2026-07 -> 2026-08
+Generated 2026-09-07T19:19:55+00:00 UTC | run 9cc000e5
+
+EXECUTIVE SUMMARY
+=================
+Overall, the variance report for the period from 2026-07 to 2026-08 shows significant growth across key accounts, with Enterprise Revenue increasing by 32%, primarily driven by a 71% increase from three key customers: Globex Corp, Initech Holdings, and Stark Industries. The single biggest driver was Globex Corp, which contributed $30,000.00 to the increase. Sales & Marketing also saw a substantial rise of $27,550.00 (+38.3%), with the new TechConf Expo contributing 91% of the increase. Hosting COGS increased by $5,383.64 (10.5%), with CloudBeam Compute being the primary driver, accounting for 74% of the total delta. This recurring pattern in cost increases for CloudBeam Compute and the consistent growth from key customers suggests that these trends are worth monitoring in the next period.
+
+PER-ACCOUNT ANALYSIS
+=====================
+
+Enterprise Revenue (4000)
+-------------------------
+Enterprise Revenue increased 32%, primarily driven by growth at 3 customers accounting for 71% of the increase, with expansion at Globex Corp, Initech Holdings, and Stark Industries.
+Delta: $+96,000.00 (+32.0%) | materiality: absolute-threshold | confidence: high
+
+The top drivers of the increase were expansion at Globex Corp (+30,000.00), Initech Holdings (+20,000.00), and Stark Industries (+18,000.00). These customers have been tracked as drivers in the previous period, indicating a consistent trend of growth. No seasonality context was observed for these drivers.
+
+Sales & Marketing (6000)
+------------------------
+Sales & Marketing increased by $27,550.00 (+38.3%), primarily driven by the new TechConf Expo contributing $25,000.00 (91% of the increase).
+Delta: $+27,550.00 (+38.3%) | materiality: absolute-threshold | confidence: high
+
+The significant increase was driven by the new TechConf Expo, which added $25,000.00 to the account, representing 91% of the total delta. Field Events LLC and Ad Platform Co also contributed positively, with deltas of $1,850.62 and $699.38, respectively, though these were smaller contributions. These drivers have been seen before in previous periods, indicating a recurring pattern.
+
+Hosting COGS (5000)
+-------------------
+Hosting COGS increased by $5,383.64 (10.5%), primarily driven by a $4,000.00 expansion in CloudBeam Compute (74% of the total delta).
+Delta: $+5,383.64 (+10.5%) | materiality: percentage-threshold | confidence: high
+
+The increase in Hosting COGS is mainly due to a significant expansion in CloudBeam Compute by $4,000.00, which represents 74% of the total delta. Similarly, NimbusHost Cloud contributed an additional $1,383.64, accounting for 26% of the total delta. Both drivers have been tracked in previous analyses, indicating a recurring pattern in cost increases.

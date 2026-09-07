@@ -9,7 +9,7 @@ just once.
 
 ## What it actually produces
 
-Real excerpt from [`examples/flux_2026-07_to_2026-08_e3e64975.md`](examples/flux_2026-07_to_2026-08_e3e64975.md),
+Real excerpt from [`examples/flux_2026-07_to_2026-08_9cc000e5.md`](examples/flux_2026-07_to_2026-08_9cc000e5.md),
 unedited:
 
 ```markdown
@@ -17,9 +17,10 @@ unedited:
 
 | Priority | Account | Task | Owner |
 |---|---|---|---|
-| P1 · Act this week | Insurance | Confirm the Insurance accrual: only 0.0% traced to subledger detail (gap $5,000.00). | Controller / Accounting |
 | P2 · Review this close cycle | Enterprise Revenue | Ask Sales Ops to confirm whether the expansion at Globex Corp, Initech Holdings, and Stark Industries is a contracted run-rate or a one-time upsell before it's forecast forward. | Sales Ops |
+| P2 · Review this close cycle | Sales & Marketing | Ask Marketing to provide a detailed breakdown of the TechConf Expo's performance, including attendee feedback and potential for future events. | Marketing |
 | P2 · Review this close cycle | Hosting COGS | Ask Vendor Management to review the cost structure of CloudBeam Compute to identify any potential inefficiencies or negotiate better pricing terms. | Vendor Management |
+| P2 · Review this close cycle | Insurance | Confirm the Insurance accrual: only 0.0% traced to subledger detail (gap $5,000.00). | Controller / Accounting |
 
 ### Enterprise Revenue (4000)
 
@@ -38,12 +39,13 @@ Delta: $+96,000.00 (+32.0%) · materiality: absolute-threshold · confidence: hi
 | Umbrella Group | +13,000.00 | expansion | 14% |
 ```
 
-The P1 row is the one worth pausing on: **the Insurance accrual is never a
-variance at all.** Nothing moved month over month, so no materiality gate fires
-on it. It surfaces because ingestion also ties the subledger out against the
-summary, and an accrual with 0% traced detail is an audit risk whether or not
-the number changed. `compile_action_plan` folds tie-out gaps into the same
-prioritized list as findings.
+The Insurance row is the one worth pausing on: **it is never a variance at all.**
+Nothing moved month over month, so no materiality gate fires on it. It surfaces
+because ingestion also ties the subledger out against the summary, and an accrual
+with 0% traced detail is worth confirming whether or not the number changed.
+`compile_action_plan` folds tie-out gaps into the same prioritized list as
+findings — and ranks them by the money behind the gap, so a $5,000 accrual sits
+below a $96,000 revenue swing instead of above it.
 
 `examples/` also holds the matching `.xlsx` workpaper (`Summary` / `Actions` /
 `Findings` / `Drivers` / `Tie-Out` sheets) and a trimmed excerpt of the
