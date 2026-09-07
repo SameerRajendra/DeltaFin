@@ -386,10 +386,9 @@ via a real Qwen extraction call. `.env` itself is still excluded from the
 image outright (a public endpoint has no business holding the full file), but
 a narrower, purpose-made Modal secret (`deltafin-hosted-llm`) injects just
 `MODAL_QWEN_URL` / `MODAL_KEY` / `MODAL_SECRET` — enough for `app/llm.py`'s
-Qwen path to work, nothing else. `TAVILY_API_KEY` is deliberately not in that
-secret; it isn't on this code path at all. The honest tradeoff here is
-different from the snapshot one above — it's a real, if scoped,
-credential-exposure surface on an unauthenticated public endpoint.
+Qwen path to work, nothing else. The honest tradeoff here is different from
+the snapshot one above — it's a real, if scoped, credential-exposure surface
+on an unauthenticated public endpoint.
 
 ---
 

@@ -27,11 +27,9 @@ MODAL_KEY / MODAL_SECRET as env vars, so app/llm.py's get_llm() picks up Qwen
 exactly as it does locally (same "Modal-hosted, scale-to-zero" endpoint,
 cold-start included).
 
-Deliberately still NOT in that secret: TAVILY_API_KEY, which isn't on this
-code path. .env itself stays fully excluded from the image (see `_ignore`
-below) -- only the three Qwen-calling values are ever present in this
-container, as a named Modal secret, never as a baked-in file or a value
-committed to source.
+.env itself stays fully excluded from the image (see `_ignore` below) -- only
+the three Qwen-calling values are ever present in this container, as a named
+Modal secret, never as a baked-in file or a value committed to source.
 
 Real tradeoff, stated plainly: this is a public, unauthenticated endpoint that
 now holds live credentials capable of calling a real, billed GPU endpoint.
