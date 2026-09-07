@@ -1,0 +1,35 @@
+name: tests
+
+# Tier 0 only. `tests/` is pure-function coverage of the variance math, the
+# cohort slicer, the AP control rules and the memory graph -- it builds its own
+# in-memory DuckDB/SQLite fixtures, so it needs no seeded data files, no model
+# endpoint and no secrets.
+#
+# Tier 1 (`evals/run_evals.py`) is deliberately NOT wired in here: it requires
+# `python data/seed_flux.py` to have generated the 20-month dataset first, and
+# it replays the whole LangGraph pipeline. Run it locally, or add a separate
+# job that seeds the data if it should gate merges.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  tier0:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run Tier 0 tests
+        run: pytest tests -q

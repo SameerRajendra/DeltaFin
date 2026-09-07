@@ -1,0 +1,15 @@
+# Test + eval dependencies. Everything the application itself needs is in
+# requirements.txt; install both to run the suite:
+#
+#     pip install -r requirements.txt -r requirements-dev.txt
+#     pytest                      # Tier 0, no data files, no model, no secrets
+#     python data/seed_flux.py    # Tier 1 needs the seeded dataset first
+#     python evals/run_evals.py
+
+pytest>=8.0
+
+# NOTE: PyYAML is deliberately NOT listed here. `evals/run_evals.py` imports
+# it to read ground_truth.yaml, but langchain-core (already in
+# requirements.txt) pins `pyyaml>=5.3.0,<7.0.0`, so it is already installed
+# transitively. Adding it again would just create a second place to keep a
+# version constraint in sync.
