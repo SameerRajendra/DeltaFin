@@ -8,7 +8,7 @@ from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from app import controls, extraction, llm as llm_module, store, tracing, workpaper
+from app import controls, extraction, llm as llm_module, store, workpaper
 
 NARRATIVE_PROMPT = """You are a senior accounts-payable auditor writing a workpaper note.
 Given the reconciliation findings below, write 3-5 sentences stating what was checked,
@@ -144,14 +144,8 @@ def build_graph(llm=None):
     return builder.compile()
 
 
-def process_invoice(source_file, session_id=None):
-    """Run one invoice through the traced graph. One invoice = one PRISM trajectory."""
+def process_invoice(source_file):
+    """Run one invoice through the graph. The single entry point for CLI and UI alike."""
     run_id = uuid.uuid4().hex[:8]
-    session_id = session_id or f"ap-recon-{run_id}"
-
-    handler = tracing.get_handler(session_id)
-    graph = tracing.instrument(build_graph(llm=llm_module.get_llm()), handler)
-    try:
-        return graph.invoke({"run_id": run_id, "source_file": str(source_file)})
-    finally:
-        tracing.flush(handler)
+    graph = build_graph(llm=llm_module.get_llm())
+    return graph.invoke({"run_id": run_id, "source_file": str(source_file)})

@@ -6,15 +6,9 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
 
-PRISM_API_KEY = os.getenv("PRISMTRACE_API_KEY", "")
-PRISM_PROJECT_ID = os.getenv("PRISMTRACE_PROJECT_ID", "")
-PRISM_HOST = os.getenv("PRISMTRACE_HOST", "https://prism-api-prod.up.railway.app")
-
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
-
-# Serverless, scale-to-zero reasoning model (vLLM/Qwen on Modal). Takes priority
-# over Anthropic when set. See modal_app/qwen_reasoner.py.
+# Serverless, scale-to-zero reasoning model (vLLM/Qwen on Modal) -- the only LLM
+# provider. Unset -> the pipeline runs its deterministic extraction and narrative
+# paths. See modal_app/qwen_reasoner.py.
 MODAL_QWEN_URL = os.getenv("MODAL_QWEN_URL", "")
 MODAL_KEY = os.getenv("MODAL_KEY", "")
 MODAL_SECRET = os.getenv("MODAL_SECRET", "")

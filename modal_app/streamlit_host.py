@@ -6,9 +6,7 @@ Deploy:
        container is allowed to hold (copy the values from your local .env):
 
            modal secret create deltafin-hosted-llm \
-               MODAL_QWEN_URL=... MODAL_KEY=... MODAL_SECRET=... \
-               PRISMTRACE_API_KEY=... PRISMTRACE_PROJECT_ID=... \
-               PRISMTRACE_HOST=...
+               MODAL_QWEN_URL=... MODAL_KEY=... MODAL_SECRET=...
 
     2. modal deploy modal_app/streamlit_host.py
 
@@ -23,20 +21,15 @@ data on its own, it only serves what's on disk right now.
 
 The AP inbox's "Upload a new invoice" panel runs the real process_invoice
 LangGraph live against whatever gets uploaded (extraction, matching, controls,
-workpaper) -- now via the real Qwen extraction path, not the deterministic
+workpaper) -- via the real Qwen extraction path, not the deterministic
 fallback: the `deltafin-hosted-llm` secret above injects MODAL_QWEN_URL /
 MODAL_KEY / MODAL_SECRET as env vars, so app/llm.py's get_llm() picks up Qwen
 exactly as it does locally (same "Modal-hosted, scale-to-zero" endpoint,
-cold-start included). PRISM credentials ride along in the same secret so this
-now-live model call gets traced like every other entry point, per this
-project's standing tracing rule (see CLAUDE.md) -- without it, this would be
-an unwired LLM call, invisible on the dashboard.
+cold-start included).
 
-Deliberately still NOT in that secret: ANTHROPIC_API_KEY (get_llm() prefers
-Qwen whenever MODAL_QWEN_URL is set, so Anthropic would be unreachable dead
-weight here) and TAVILY_API_KEY (unused on this code path). .env itself stays
-fully excluded from the image (see `_ignore` below) -- only the four
-Qwen-calling values and the three PRISM values are ever present in this
+Deliberately still NOT in that secret: TAVILY_API_KEY, which isn't on this
+code path. .env itself stays fully excluded from the image (see `_ignore`
+below) -- only the three Qwen-calling values are ever present in this
 container, as a named Modal secret, never as a baked-in file or a value
 committed to source.
 
@@ -51,11 +44,9 @@ for anything holding higher-value credentials later.
 
 Dependencies are the subset of requirements.txt this page's live code paths
 need: langgraph (app/graph.py), openpyxl (workpaper generation), pypdf (.pdf
-uploads), langchain-openai (Qwen's OpenAI-compatible client, app/llm.py),
-prismtrace-sdk (tracing). Not included: duckdb/langchain-anthropic -- nothing
-on this code path needs them (the flux view only reads pre-generated files,
-never queries DuckDB live; get_llm() never reaches the Anthropic branch while
-MODAL_QWEN_URL is set).
+uploads), langchain-openai (Qwen's OpenAI-compatible client, app/llm.py). Not
+included: duckdb -- nothing on this code path needs it (the flux view only
+reads pre-generated files, never queries DuckDB live).
 """
 
 import modal
@@ -79,7 +70,6 @@ image = (
         "openpyxl>=3.1",
         "pypdf>=5.0",
         "langchain-openai>=0.2",
-        "prismtrace-sdk>=0.4.2",
     )
     .add_local_dir(".", remote_path="/root/app", copy=True, ignore=_ignore)
 )

@@ -1,13 +1,14 @@
-"""Model access. Absent a provider key the pipeline still runs, deterministically."""
+"""Model access. Absent a configured model the pipeline still runs, deterministically."""
 
 from app import config
 
 
 def get_llm():
-    """Return a chat model, or None when no provider is configured.
+    """Return a chat model, or None when no model is configured.
 
-    Prefers the serverless Qwen endpoint on Modal (scale-to-zero, so the first
-    call after idle time eats a cold start) over Anthropic when both are set.
+    The serverless Qwen endpoint on Modal is the only provider (scale-to-zero,
+    so the first call after idle time eats a cold start). With MODAL_QWEN_URL
+    unset every caller falls back to its deterministic path.
     """
     if config.MODAL_QWEN_URL:
         from langchain_openai import ChatOpenAI
@@ -21,13 +22,4 @@ def get_llm():
             api_key=f"{config.MODAL_KEY}.{config.MODAL_SECRET}",
             temperature=0,
         )
-    if not config.ANTHROPIC_API_KEY:
-        return None
-    from langchain_anthropic import ChatAnthropic
-
-    return ChatAnthropic(
-        model=config.MODEL,
-        api_key=config.ANTHROPIC_API_KEY,
-        max_tokens=1500,
-        temperature=0,
-    )
+    return None

@@ -4,7 +4,7 @@ An agentic accounts-payable reconciliation system. You hand it an invoice
 document; it extracts the fields, matches them three ways against an ERP, a bank
 feed, and a vendor master, runs AP control rules over the result, writes an
 audit-ready Excel workpaper, and puts the whole thing in front of a human to
-approve or reject. Every run is traced to PRISM.
+approve or reject.
 
 Built for the AI x Finance "Money Talks" hackathon, Money Operations track.
 
@@ -52,7 +52,6 @@ The system produces:
 - **A recommendation** — `HOLD` (never an action, only a recommendation)
 - **An audit workpaper** — `out/workpaper_INV-2001_38e95103.xlsx`, five sheets
 - **A review queue entry** — surfaced in the Streamlit approval inbox
-- **A PRISM trajectory** — one session per invoice, spans for every node
 
 ---
 
@@ -76,9 +75,6 @@ The system produces:
                       │        ↓                                │
                       │  queue_for_review ────► invoices table  │
                       └─────────────────┬───────────────────────┘
-                                        │ callbacks on every node
-                                        ▼
-                              PRISM  (app/tracing.py)
                                         │
                                         ▼
                         Streamlit approval inbox (human decides)
@@ -116,9 +112,10 @@ POs, and three settled bank transactions.
 
 Turns document text into a structured invoice dict. Two paths:
 
-- **With `ANTHROPIC_API_KEY`** — the text goes to the model with a prompt
-  demanding a strict JSON object. The response is JSON-extracted and parsed.
-- **Without a key** — a deterministic regex parser pulls the same fields, and a
+- **With a model configured (`MODAL_QWEN_URL`)** — the text goes to the model
+  with a prompt demanding a strict JSON object. The response is JSON-extracted
+  and parsed.
+- **Without one** — a deterministic regex parser pulls the same fields, and a
   column-aware regex reads the line-item table.
 
 The LLM path degrades to the parser on any JSON failure, so extraction never
@@ -182,23 +179,10 @@ partial state update:
 | `queue_for_review` | everything | `invoice_id` |
 
 `process_invoice(source_file)` is the single entry point: it mints a run ID,
-builds the handler, wraps the graph, invokes, and flushes traces in a `finally`.
-Both the CLI and the UI go through it, so there is exactly one traced path.
+builds the graph, and invokes it. Both the CLI and the UI go through it, so
+there is exactly one path.
 
-### 4.6 Observability — `app/tracing.py`
-
-PRISM is wired with `PRISMtraceLangGraphHandler` + `wrap_langgraph`, which
-injects callbacks at `invoke`/`stream` so no call site repeats
-`config={"callbacks": [...]}`.
-
-**One invoice = one `session_id` = one trajectory.** That grouping is what turns
-individual spans into a reviewable agent run in the dashboard.
-
-Every PRISM call is wrapped so that a missing SDK, absent credentials, or an
-unreachable collector degrades to a warning on stderr. Instrumentation that can
-take down an AP pipeline is worse than no instrumentation.
-
-### 4.7 Review UI — `ui/streamlit_app.py`
+### 4.6 Review UI — `ui/streamlit_app.py`
 
 The human-in-the-loop surface, and the reason the agent's output is a
 *recommendation*:
@@ -217,7 +201,7 @@ The human-in-the-loop surface, and the reason the agent's output is a
 
 ```bash
 pip install -r requirements.txt
-cp .env.example .env          # PRISM keys; ANTHROPIC_API_KEY optional
+cp .env.example .env          # MODAL_QWEN_URL optional; unset runs deterministic
 python data/seed.py           # build the ledger
 python run_demo.py            # process all sample invoices
 streamlit run ui/streamlit_app.py
@@ -248,16 +232,10 @@ original is processed before its duplicate.
 matching and control evaluation are deterministic code. Anything that determines
 whether money moves is auditable and reproducible.
 
-**It runs without a provider key.** No `ANTHROPIC_API_KEY` and the pipeline still
-completes via the regex parser and a templated narrative. A demo that depends on
-a live provider is a demo that can fail in front of judges. Adding a key upgrades
-extraction quality and produces genuine model spans in PRISM.
-
-**One trajectory per invoice.** Traces without a shared `session_id` stay raw and
-never assemble into a reviewable run.
-
-**Tracing fails open.** Instrumentation degrades to stderr warnings rather than
-raising into the pipeline.
+**It runs without a model configured.** No `MODAL_QWEN_URL` and the pipeline
+still completes via the regex parser and a templated narrative. A demo that
+depends on a live provider is a demo that can fail in front of judges.
+Configuring Qwen upgrades extraction quality; it is never load-bearing.
 
 **The workpaper carries its own evidence.** The source text ships inside the
 workbook, so findings can be checked without going back to the system.
@@ -331,16 +309,16 @@ without any further wiring.
 | Driver decomposition | `app/flux/slicer.py` | Cohort slicing and the concentration statistic |
 | Memory | `app/flux/memory.py` | Described above |
 | Action planning | `app/flux/actions.py` | Priority and owner assignment, described in §8.5 |
-| Orchestration | `app/flux/graph.py` | LangGraph `StateGraph`, one trajectory per period comparison, traced to PRISM with the same `get_handler` / `instrument` / `flush` pattern as `app/graph.py` |
+| Orchestration | `app/flux/graph.py` | LangGraph `StateGraph`, one run per period comparison |
 | Output | `app/flux/brief.py` | A markdown executive brief plus an `.xlsx` workpaper (findings, drivers, actions, tie-out) per comparison, written to `out/flux/` |
 
-### 8.4 Model: serverless Qwen on Modal, Anthropic as fallback
+### 8.4 Model: serverless Qwen on Modal
 
-`app/llm.py` prefers a self-hosted, scale-to-zero Qwen2.5-7B-Instruct endpoint
-on Modal (`modal_app/qwen_reasoner.py`, deployed separately with
-`modal deploy`) over `ANTHROPIC_API_KEY` when `MODAL_QWEN_URL` is set — a
-cost/control tradeoff for a pipeline that calls the model twice per period
-(per-account explanation, then executive synthesis) across a 20-period replay.
+`app/llm.py` uses a self-hosted, scale-to-zero Qwen2.5-7B-Instruct endpoint on
+Modal (`modal_app/qwen_reasoner.py`, deployed separately with `modal deploy`)
+as its only provider, reached when `MODAL_QWEN_URL` is set — a cost/control
+tradeoff for a pipeline that calls the model twice per period (per-account
+explanation, then executive synthesis) across a 20-period replay.
 The tradeoff is a cold start on the first call after ~3 minutes idle
 (`scaledown_window=180`). Either way, `explain_drivers` and `synthesize_brief`
 degrade to a deterministic, driver-table-derived template if no LLM is
@@ -407,13 +385,11 @@ The one thing that *does* run live is the AP inbox's invoice-upload panel,
 via a real Qwen extraction call. `.env` itself is still excluded from the
 image outright (a public endpoint has no business holding the full file), but
 a narrower, purpose-made Modal secret (`deltafin-hosted-llm`) injects just
-`MODAL_QWEN_URL` / `MODAL_KEY` / `MODAL_SECRET` plus the three `PRISMTRACE_*`
-values — enough for `app/llm.py`'s Qwen path and its trace to work, nothing
-else. `ANTHROPIC_API_KEY` and `TAVILY_API_KEY` are deliberately not in that
-secret: Qwen takes priority whenever it's configured, so Anthropic credentials
-would sit unused, and Tavily isn't on this code path at all. The honest
-tradeoff here is different from the snapshot one above — it's a real, if
-scoped, credential-exposure surface on an unauthenticated public endpoint.
+`MODAL_QWEN_URL` / `MODAL_KEY` / `MODAL_SECRET` — enough for `app/llm.py`'s
+Qwen path to work, nothing else. `TAVILY_API_KEY` is deliberately not in that
+secret; it isn't on this code path at all. The honest tradeoff here is
+different from the snapshot one above — it's a real, if scoped,
+credential-exposure surface on an unauthenticated public endpoint.
 
 ---
 
@@ -421,6 +397,10 @@ scoped, credential-exposure surface on an unauthenticated public endpoint.
 
 Honest about what this is — a hackathon slice:
 
+- **There is no observability layer.** An earlier PRISM tracing integration was
+  removed; a run is now visible only through stderr and the artifacts it writes
+  (`out/`, the SQLite ledger, the flux memory DB). Reconstructing what a failed
+  run did means re-running it.
 - **The graph is linear.** No retries, no conditional routing, no re-extraction
   when confidence is low. Deterministic and demoable, but a production version
   would branch on extraction confidence and retry failed parses.

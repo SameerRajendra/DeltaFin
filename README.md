@@ -25,13 +25,11 @@ ingest_document -> extract_fields -> match_records -> evaluate_controls
 - **Workpaper** (`app/workpaper.py`) — five-sheet .xlsx with evidence and the match grid
 - **Review UI** (`ui/streamlit_app.py`) — approval inbox with side-by-side diffs
 
-Every run is traced to PRISM (`app/tracing.py`), one session per invoice.
-
 ## Quickstart
 
 ```bash
 pip install -r requirements.txt
-cp .env.example .env      # fill in PRISM keys; ANTHROPIC_API_KEY optional
+cp .env.example .env      # MODAL_QWEN_URL optional; unset runs the deterministic path
 python data/seed.py
 python run_demo.py
 streamlit run ui/streamlit_app.py

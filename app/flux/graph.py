@@ -4,8 +4,7 @@ ingest_periods -> compute_variances -> rank_materiality -> slice_drivers
     -> recall_memory -> explain_drivers -> compile_action_plan -> synthesize_brief
     -> persist_memory -> render_artifacts
 
-One trajectory per period comparison, traced to PRISM exactly like
-app/graph.py's invoice pipeline (same get_handler/instrument/flush pattern).
+One run per period comparison, the same shape as app/graph.py's invoice pipeline.
 """
 
 import json
@@ -15,7 +14,7 @@ from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from app import llm as llm_module, tracing
+from app import llm as llm_module
 from app.flux import actions as actions_module, brief as brief_module, ingest, memory, slicer, variance
 
 EXPLAIN_PROMPT = """You are a senior FP&A analyst explaining a month-over-month variance
@@ -353,23 +352,20 @@ def build_graph(llm=None, conn=None):
     return builder.compile()
 
 
-def process_period(period=None, prior_period=None, session_id=None, conn=None):
-    """Run one period comparison through the traced graph. One comparison = one PRISM trajectory.
+def process_period(period=None, prior_period=None, conn=None):
+    """Run one period comparison through the graph.
 
     Pass `conn` (a shared `ingest.connect()`) when running many comparisons back
     to back (see run_flux.py --replay) -- see build_graph's docstring for why
     that matters in this sandbox.
     """
     run_id = uuid.uuid4().hex[:8]
-    session_id = session_id or f"flux-{run_id}"
     owns_conn = conn is None
     conn = conn or ingest.connect()
 
-    handler = tracing.get_handler(session_id, agent_name="flux-variance-graph")
-    graph = tracing.instrument(build_graph(llm=llm_module.get_llm(), conn=conn), handler)
+    graph = build_graph(llm=llm_module.get_llm(), conn=conn)
     try:
         return graph.invoke({"run_id": run_id, "period": period, "prior_period": prior_period})
     finally:
         if owns_conn:
             conn.close()
-        tracing.flush(handler)

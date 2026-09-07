@@ -1,8 +1,5 @@
-prismtrace-sdk>=0.4.2
 langgraph>=0.2
-langchain>=0.3
 langchain-core>=0.3
-langchain-anthropic>=0.3
 langchain-openai>=0.2
 modal>=1.5
 duckdb>=1.0

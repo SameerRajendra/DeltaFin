@@ -204,7 +204,7 @@ def ap_inbox():
     with st.expander("Upload a new invoice", expanded=False):
         st.caption(
             "Runs the same LangGraph pipeline as `run_demo.py` — extraction, three-way match, "
-            "AP controls, workpaper, PRISM trace — live, on this one document."
+            "AP controls, workpaper — live, on this one document."
         )
         _handle_invoice_upload()
 
@@ -213,7 +213,6 @@ def ap_inbox():
     )
     invoices = store.list_invoices(conn, None if status == "all" else status)
     st.sidebar.metric("In queue", len(invoices))
-    st.sidebar.caption("Traces stream to PRISM per invoice run.")
 
     if not invoices:
         st.info(f"Nothing in '{status}'.")

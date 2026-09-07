@@ -20,23 +20,20 @@ compiled into an audit-ready workpaper, and queued for human approval.
 
 ```bash
 python data/seed.py       # build the ledger
-python run_demo.py        # process sample invoices (emits PRISM traces)
+python run_demo.py        # process sample invoices
 streamlit run ui/streamlit_app.py
 ```
 
-`ANTHROPIC_API_KEY` is optional: without it, extraction and the narrative fall
-back to deterministic logic so the graph still runs and still traces.
+`MODAL_QWEN_URL` is optional: without it, extraction and the narrative fall
+back to deterministic logic so the graph still runs.
 
-## PRISM tracing (do not remove)
+## Model access
 
-This project sends traces to PRISM. Env vars: `PRISMTRACE_API_KEY`,
-`PRISMTRACE_PROJECT_ID`, `PRISMTRACE_HOST`.
+Qwen on Modal (`modal_app/qwen_reasoner.py`, serverless vLLM behind an
+OpenAI-compatible endpoint) is the only LLM provider, reached through
+`app/llm.py`'s `get_llm()`. Env vars: `MODAL_QWEN_URL`, `MODAL_KEY`,
+`MODAL_SECRET`. When `get_llm()` returns `None`, every caller has a
+deterministic fallback path — that property is load-bearing, keep it.
 
-Tracing is currently wired at: `app/tracing.py` (handler + `wrap_langgraph`),
-`app/graph.py` (`process_invoice` creates one session per invoice run and
-flushes), `app/config.py` (env loading), `.env.example` (key names).
-
-**Standing rule.** Whenever you add or change an agent, chain, graph, tool,
-retriever, or any entry point that calls a model, wire it to PRISM before you
-finish. Unwired code is invisible in the dashboard. If you are unsure whether
-something is covered, assume it is not and wire it.
+There is no observability layer. An earlier PRISM tracing integration was
+removed; do not re-add tracing wiring unless asked for it explicitly.

@@ -21,10 +21,9 @@ before the model ever sees anything -- same "no LLM arithmetic" rule as the
 rest of this project. Qwen (via app/llm.get_llm(), serverless on Modal when
 MODAL_QWEN_URL is set) only narrates those already-computed facts: it names
 the account, quotes the given figures, and suggests a next step. It cannot
-invent a number that isn't in the prompt, and every LLM call is wired to
-PRISM (one session per upload) per this project's standing tracing rule.
-Falls back to a deterministic template if no LLM is configured or a response
-fails to parse -- narration never blocks the numbers from being usable.
+invent a number that isn't in the prompt. Falls back to a deterministic
+template if no LLM is configured or a response fails to parse -- narration
+never blocks the numbers from being usable.
 
 Usage:
     python app/flux/demo_api.py <summary_file> <transactions_file> <audit_ts_out_path>
@@ -33,7 +32,6 @@ Usage:
 import json
 import re
 import sys
-import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
@@ -41,7 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 import duckdb  # noqa: E402
 import pandas as pd  # noqa: E402
 
-from app import llm as llm_module, tracing  # noqa: E402
+from app import llm as llm_module  # noqa: E402
 from app.flux import ingest  # noqa: E402
 
 SUMMARY_COLUMNS = ["period", "account_code", "account_name", "account_type", "amount"]
@@ -232,10 +230,8 @@ def _narrate_with_llm(tie_out: list[dict], known_accrual_codes: set[str]) -> dic
     )
     prompt = NARRATE_PROMPT.format(account_lines=account_lines)
 
-    session_id = f"audit-demo-upload-{uuid.uuid4().hex[:8]}"
-    handler = tracing.get_handler(session_id, agent_name="audit-agent-live-upload")
     try:
-        response = llm.invoke(prompt, config={"callbacks": [handler]} if handler else None)
+        response = llm.invoke(prompt)
         text = response.content if hasattr(response, "content") else str(response)
         match = re.search(r"\{.*\}", text, re.DOTALL)
         if not match:
@@ -245,8 +241,6 @@ def _narrate_with_llm(tie_out: list[dict], known_accrual_codes: set[str]) -> dic
     except Exception as exc:  # noqa: BLE001 -- narration is best-effort, never fatal
         print(f"[demo_api] LLM narration failed ({exc}); using template narration", file=sys.stderr)
         return None
-    finally:
-        tracing.flush(handler)
 
 
 def _to_audit_ts(
@@ -420,7 +414,6 @@ def _to_audit_ts(
             if flagged else [{"label": "Fully reconciled", "tone": "emerald"}]
         ) + [{"label": "Verified against transaction detail", "tone": "info"}]
         + ([{"label": "Narrated by Qwen", "tone": "info"}] if narrative else []),
-        "link": {"label": "View live traces on PRISM", "url": "https://prism.blockconvey.com/"},
     }
 
     def block(name: str, type_annotation: str, value) -> str:
