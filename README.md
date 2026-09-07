@@ -145,11 +145,19 @@ streamlit run ui/streamlit_app.py
 ```
 
 **Or bring your own numbers.** The flux page has an "Analyze your own financials"
-panel: drop in a period summary and a transaction subledger (each covering at
-least two `YYYY-MM` periods) and it runs the same graph over them, returning the
-analysis, the prioritized action plan, and downloadable artifacts. Those runs are
-**isolated** — an uploaded company's data is never read into, or written into, the
-institutional memory built from the seeded ledger (`app/flux/uploads.py`).
+panel: drop in a period summary and a transaction subledger and it runs the same
+graph over them, returning the analysis, the prioritized action plan, and
+downloadable artifacts. Those runs are **isolated** — an uploaded company's data is
+never read into, or written into, the institutional memory built from the seeded
+ledger (`app/flux/uploads.py`).
+
+Each uploaded file must carry **at least two `YYYY-MM` periods**; the latest two
+present are compared. Note the seeded files under `data/financials/` are one
+period per file and so are *not* valid uploads on their own —
+[`examples/upload_sample_summary.csv`](examples/upload_sample_summary.csv) and
+[`examples/upload_sample_transactions.csv`](examples/upload_sample_transactions.csv)
+are a known-good pair (2026-07 + 2026-08), and the panel offers them for download
+directly.
 
 `python run_flux.py 2026-08` runs a single comparison instead. The seeded
 dataset has planted stories to find (`data/seed_flux.py` names them in its

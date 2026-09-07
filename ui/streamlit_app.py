@@ -339,14 +339,50 @@ def _flux_feedback_section(brief):
             st.divider()
 
 
+_SAMPLE_UPLOADS = (
+    ("Sample summary (.csv)", "upload_sample_summary.csv", "flux_sample_summary"),
+    ("Sample transactions (.csv)", "upload_sample_transactions.csv", "flux_sample_txn"),
+)
+
+
+def _offer_sample_uploads():
+    """Download buttons for a known-good pair, so the panel is demoable without
+    hunting for correctly-shaped data first.
+
+    These are 2026-07 + 2026-08 of the seeded ledger concatenated into one file
+    each -- the same comparison the committed example brief covers.
+    """
+    root = Path(__file__).resolve().parent.parent / "examples"
+    available = [(label, root / name, key) for label, name, key in _SAMPLE_UPLOADS if (root / name).exists()]
+    if len(available) != len(_SAMPLE_UPLOADS):
+        return
+    st.caption("No data handy? Download this pair and upload them straight back:")
+    cols = st.columns(len(available))
+    for col, (label, path, key) in zip(cols, available):
+        col.download_button(
+            label,
+            data=path.read_bytes(),
+            file_name=path.name,
+            mime="text/csv",
+            key=key,
+        )
+
+
 def _handle_flux_upload():
     st.caption(
         "Two files: a period summary (`period, account_code, account_name, amount`) and a "
         "transaction detail file (`period, account_code, amount`, plus `customer_id` or "
-        "`vendor`). Each needs at least two `YYYY-MM` periods -- the latest two present are "
-        "compared. `resolve_roles` sniffs which file is which by its columns, so File 1 / "
-        "File 2 order genuinely doesn't matter. See `data/financials/` for the expected shape."
+        "`vendor`). **Each file needs at least two `YYYY-MM` periods in it** -- the latest two "
+        "present are compared. `resolve_roles` sniffs which file is which by its columns, so "
+        "File 1 / File 2 order genuinely doesn't matter."
     )
+
+    # The seeded dataset under data/financials/ is deliberately one period per
+    # file, so those files are NOT valid uploads on their own -- a single-period
+    # summary is rejected up front. Hand the user a working pair instead of
+    # pointing them at files that will bounce.
+    _offer_sample_uploads()
+
     file_a = st.file_uploader("File 1", type=["csv", "xlsx"], key="flux_upload_a")
     file_b = st.file_uploader("File 2", type=["csv", "xlsx"], key="flux_upload_b")
     if file_a is None or file_b is None:
