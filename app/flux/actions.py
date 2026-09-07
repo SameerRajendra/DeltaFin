@@ -76,24 +76,45 @@ def build_plan(findings: list[dict], tie_out: list[dict]) -> list[dict]:
                 "amount": abs(f.get("delta") or 0),
             }
         )
+    by_account = {i["account_code"]: i for i in items}
     for row in tie_out:
         priority = gap_priority(row["coverage_pct"])
         if not priority:
             continue
-        items.append(
-            {
-                "priority": priority,
-                "priority_label": _PRIORITY_LABEL.get(priority, ""),
-                "account_code": row["account_code"],
-                "account_name": row["account_name"],
-                "owner": "Controller / Accounting",
-                "task": (
-                    f"Confirm the {row['account_name']} accrual: only {row['coverage_pct']}% "
-                    f"traced to subledger detail (gap ${row['gap']:,.2f})."
-                ),
-                "context": "Subledger tie-out gap",
-                "amount": abs(row["gap"]),
-            }
+        gap_task = (
+            f"Confirm the {row['account_name']} accrual: only {row['coverage_pct']}% "
+            f"traced to subledger detail (gap ${row['gap']:,.2f})."
         )
+        existing = by_account.get(row["account_code"])
+        if existing is not None:
+            # One row per account. An account can be both materially moved AND
+            # short on subledger coverage -- Insurance in the premium-true-up
+            # month is exactly that -- and emitting a task for each produced two
+            # near-identical rows at different priorities for one underlying
+            # problem. Keep the more urgent of the two, and say both reasons.
+            if _PRIORITY_ORDER.get(priority, 9) < _PRIORITY_ORDER.get(existing["priority"], 9):
+                existing["priority"] = priority
+                existing["priority_label"] = _PRIORITY_LABEL.get(priority, "")
+                existing["owner"] = "Controller / Accounting"
+                existing["task"] = gap_task
+            existing["context"] = (
+                f"{existing['context']} · Subledger tie-out gap"
+                if existing["context"]
+                else "Subledger tie-out gap"
+            )
+            existing["amount"] = max(existing["amount"], abs(row["gap"]))
+            continue
+        item = {
+            "priority": priority,
+            "priority_label": _PRIORITY_LABEL.get(priority, ""),
+            "account_code": row["account_code"],
+            "account_name": row["account_name"],
+            "owner": "Controller / Accounting",
+            "task": gap_task,
+            "context": "Subledger tie-out gap",
+            "amount": abs(row["gap"]),
+        }
+        items.append(item)
+        by_account[row["account_code"]] = item
     items.sort(key=lambda i: (_PRIORITY_ORDER.get(i["priority"], 9), -i["amount"]))
     return items
