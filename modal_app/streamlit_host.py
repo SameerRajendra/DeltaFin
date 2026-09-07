@@ -42,9 +42,14 @@ for anything holding higher-value credentials later.
 
 Dependencies are the subset of requirements.txt this page's live code paths
 need: langgraph (app/graph.py), openpyxl (workpaper generation), pypdf (.pdf
-uploads), langchain-openai (Qwen's OpenAI-compatible client, app/llm.py). Not
-included: duckdb -- nothing on this code path needs it (the flux view only
-reads pre-generated files, never queries DuckDB live).
+uploads), langchain-openai (Qwen's OpenAI-compatible client, app/llm.py), and
+duckdb -- required since ui/streamlit_app.py began importing app/flux/uploads.py
+at module scope for the CSV upload panel, which builds its in-memory summary/txn
+tables in DuckDB. Without it the Streamlit process dies on import and the page
+never starts, so do not drop it back out.
+
+The flux *viewer* still only reads pre-generated files and never queries DuckDB;
+it is the upload path that needs it.
 """
 
 import modal
@@ -68,6 +73,7 @@ image = (
         "openpyxl>=3.1",
         "pypdf>=5.0",
         "langchain-openai>=0.2",
+        "duckdb>=1.0",
     )
     .add_local_dir(".", remote_path="/root/app", copy=True, ignore=_ignore)
 )
