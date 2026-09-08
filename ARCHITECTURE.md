@@ -366,15 +366,42 @@ there is exactly one path.
 The human-in-the-loop surface, and the reason the agent's output is a
 *recommendation*:
 
-- Sidebar queue filtered by status, with a count
-- Three-way match rendered as an attribute table with an explicit `OK` / `MISMATCH` column
-- Invoice / PO / variance metrics
-- Exceptions as severity-coloured cards
-- The auditor narrative
-- One-click workpaper download
-- Approve / reject with a reviewer note, written to `approvals` as an audit trail
+- Sidebar queue filtered by status, with a count and a stacked bar of the whole
+  queue by agent recommendation — the filtered view answers "what am I working
+  on", the bar answers "what does the backlog look like"
+- Evidence on the left in three tabs, decision on the right, always visible:
+  - **Match** — a status grid of every (attribute, source) pair, carrying a
+    redundant `OK` / `X` / `—` glyph so it reads without colour perception;
+    below it, invoice vs. purchase order with the tolerance band drawn as
+    dashed rules. The original attribute-by-attribute table is kept, demoted
+    into an expander, because it carries the Date and Status rows the charts
+    don't
+  - **Exceptions** — exceptions ranked by severity, above the severity-coloured
+    cards
+  - **Narrative** — the auditor narrative
+- Invoice / PO / variance metrics, the workpaper download, and Approve / reject
+  with a reviewer note (written to `approvals` as an audit trail) sit together
+  in the right-hand column, never behind a tab — the decision is the point of
+  the page
 
-The same Streamlit app carries the flux page described in §2.2.
+The amount tolerance is computed in exactly one place (`_po_match`), read by
+both the table cell and the chart, so the two cannot drift into disagreeing on
+screen. Note that check is two-sided while `controls.py` only raises
+`amount_over_po` when the invoice is *over*: an invoice materially under its PO
+reads `MISMATCH` with no exception beside it.
+
+The same Streamlit app carries the flux page described in §2.2, and both pages
+draw from `ui/charts.py` — the single home for every chart builder and for the
+app's colour scales (cohort, priority, severity, recommendation, match). That
+module is pure: DataFrames in, Altair objects or `None` out, no `st.*` calls, and
+it never sets a background or text colour so Streamlit can re-theme each chart
+for light and dark.
+
+The flux page renders both its live-upload and seeded-brief views through one
+shared renderer, laid out as **Overview / Findings / Actions / Tie-out /
+Exports** tabs, so the two views are the same product fed from different
+sources. The materiality gate is stated once per page rather than restated by
+each view.
 
 ---
 

@@ -9,11 +9,13 @@ already-written `.xlsx` workpaper's sheets). `ui/streamlit_app.py` owns
 adapting each view's data into the DataFrame shapes documented per
 function; this module only draws.
 
-Cohort and priority each get one fixed color scale, defined once here, so
-the same color means the same thing on every chart in the app. Nothing
-below sets an explicit background or text color -- Streamlit re-themes
-Altair charts for light/dark automatically, and hardcoding either would
-break that.
+Cohort, priority, severity, recommendation, and match status each get one
+fixed color scale, defined once here, so the same color means the same
+thing on every chart in the app. These same dicts are also the source for
+the inline-HTML badges in `ui/streamlit_app.py`, so the palette has exactly
+one home. Nothing below sets an explicit background or text color --
+Streamlit re-themes Altair charts for light/dark automatically, and
+hardcoding either would break that.
 """
 
 import altair as alt
@@ -32,12 +34,27 @@ PRIORITY_COLORS = {
     "P2": "#e67e22",  # orange -- review this close cycle
     "P3": "#7f8c8d",  # gray -- monitor only, nothing actionable yet
 }
+# Moved here from ui/streamlit_app.py (lines 24-30), which held a second,
+# competing palette. Two hex values changed in the move:
+#   - "low" severity: #5d8a3a -> #7f8c8d, the same gray as
+#     PRIORITY_COLORS["P3"]. "low severity" and "monitor only" say the same
+#     thing to the reader, so they now render as the same color.
+#   - "approve": #2e7d32 -> #27ae60, i.e. INCREASE_COLOR (below), so the app
+#     has exactly one green instead of three.
+SEVERITY_COLORS = {"critical": "#c0392b", "high": "#d35400", "medium": "#b7950b", "low": "#7f8c8d"}
+RECOMMENDATION_COLORS = {"hold": "#c0392b", "review": "#b7950b", "approve": "#27ae60"}
+MATCH_COLORS = {"match": "#27ae60", "mismatch": "#c0392b", "not available": "#95a5a6"}
 INCREASE_COLOR = "#27ae60"
 DECREASE_COLOR = "#c0392b"
 TOTAL_COLOR = "#34495e"
 
 _COHORT_SCALE = alt.Scale(domain=list(COHORT_COLORS), range=list(COHORT_COLORS.values()))
 _PRIORITY_SCALE = alt.Scale(domain=list(PRIORITY_COLORS), range=list(PRIORITY_COLORS.values()))
+_SEVERITY_SCALE = alt.Scale(domain=list(SEVERITY_COLORS), range=list(SEVERITY_COLORS.values()))
+_RECOMMENDATION_SCALE = alt.Scale(
+    domain=list(RECOMMENDATION_COLORS), range=list(RECOMMENDATION_COLORS.values())
+)
+_MATCH_SCALE = alt.Scale(domain=list(MATCH_COLORS), range=list(MATCH_COLORS.values()))
 _BRIDGE_SCALE = alt.Scale(
     domain=["total", "increase", "decrease"],
     range=[TOTAL_COLOR, INCREASE_COLOR, DECREASE_COLOR],
@@ -186,7 +203,7 @@ def driver_contribution_chart(drivers: pd.DataFrame):
     return alt.layer(*layers).properties(title="Driver contribution")
 
 
-def account_movement_chart(findings: pd.DataFrame):
+def account_movement_chart(findings: pd.DataFrame, title: str = "Account movement overview"):
     """Horizontal bars of every material finding's delta, colored by
     priority, sorted so the biggest increases and decreases anchor the ends.
 
@@ -210,7 +227,47 @@ def account_movement_chart(findings: pd.DataFrame):
         ],
     )
     layers = [bars] + _signed_value_labels(df, "account_name", "delta", order)
-    return alt.layer(*layers).properties(title="Account movement overview")
+    return alt.layer(*layers).properties(title=title)
+
+
+def movement_vs_gate_chart(movements: pd.DataFrame, threshold: float):
+    """Every account's delta against the materiality gate, for a period where
+    nothing cleared it.
+
+    A quiet close used to render as a five-row table under a paragraph of
+    explanation, which reads like the agent found nothing to say. Charting the
+    movements against a dashed rule at +/- `threshold` answers the reader's
+    actual question -- "how close was anything to mattering?" -- and the answer
+    is visible in one glance instead of arithmetic across two columns.
+
+    `movements` needs columns `account_name` and `delta`. Returns `None` when
+    there is nothing to plot.
+    """
+    if movements is None or movements.empty:
+        return None
+    df = movements.copy()
+    df["direction"] = df["delta"].apply(lambda d: "increase" if d >= 0 else "decrease")
+    order = df.sort_values("delta", ascending=False)["account_name"].tolist()
+    direction_scale = alt.Scale(domain=["increase", "decrease"], range=[INCREASE_COLOR, DECREASE_COLOR])
+
+    bars = alt.Chart(df).mark_bar(opacity=0.85).encode(
+        y=alt.Y("account_name:N", sort=order, title=None),
+        x=alt.X("delta:Q", title="Delta vs. prior period"),
+        color=alt.Color("direction:N", scale=direction_scale, legend=None),
+        tooltip=[
+            alt.Tooltip("account_name:N", title="Account"),
+            alt.Tooltip("delta:Q", title="Delta", format="+,.2f"),
+        ],
+    )
+    # Both rules, always: the gate is symmetric, and showing only the side the
+    # data happens to sit on would imply a one-directional threshold.
+    gate = alt.Chart(pd.DataFrame({"gate": [threshold, -threshold]})).mark_rule(
+        strokeDash=[6, 4], color=TOTAL_COLOR
+    ).encode(x=alt.X("gate:Q"))
+    layers = [bars, gate] + _signed_value_labels(df, "account_name", "delta", order)
+    return alt.layer(*layers).properties(
+        title=f"Account movement vs. the ±{threshold:,.0f} materiality gate (dashed)"
+    )
 
 
 def tie_out_chart(tie_out: pd.DataFrame):
@@ -254,3 +311,317 @@ def tie_out_chart(tie_out: pd.DataFrame):
         text=alt.Text("uncovered_pct:Q", format=".0f"),
     )
     return (bars + labels).properties(title="Subledger tie-out — unreconciled share")
+
+
+def queue_composition_chart(counts: pd.DataFrame):
+    """Compact stacked horizontal bar of the whole AP queue, split by agent
+    recommendation. This renders in the sidebar next to the full queue
+    table, so it stays small and skips axes rather than repeating detail
+    the table already shows.
+
+    `counts` needs columns `recommendation` ("hold"/"review"/"approve") and
+    `count` (int), one row per recommendation. Returns `None` when the
+    frame is empty/None or every count is zero (nothing queued).
+    """
+    if counts is None or counts.empty or counts["count"].sum() == 0:
+        return None
+    return (
+        alt.Chart(counts)
+        .mark_bar()
+        .encode(
+            x=alt.X("count:Q", stack="zero", title=None, axis=None),
+            color=alt.Color(
+                "recommendation:N",
+                scale=_RECOMMENDATION_SCALE,
+                legend=alt.Legend(title=None, orient="bottom", columns=3),
+            ),
+            tooltip=[
+                alt.Tooltip("recommendation:N", title="Recommendation"),
+                alt.Tooltip("count:Q", title="Count"),
+            ],
+        )
+        .properties(height=40, title="Queue by agent recommendation")
+    )
+
+
+def invoice_vs_po_chart(invoice_amt, po_amt, tolerance, status):
+    """Two-bar comparison of an invoice's amount against its purchase
+    order, with dashed rules marking the tolerance band around the PO.
+
+    `status` is caller-supplied -- either "within tolerance" or "outside
+    tolerance" -- and this function does not recompute that boolean. The
+    caller already owns the tolerance logic; re-deriving it here is how the
+    chart and the table it sits next to end up disagreeing. Both tolerance
+    rules are always drawn, at `po_amt + tolerance` and `po_amt -
+    tolerance`, because the tolerance is symmetric -- the same dashed-gate
+    idiom `movement_vs_gate_chart` uses, so a dashed line means "threshold"
+    everywhere in the app.
+
+    Returns `None` if `po_amt` is `None` or `invoice_amt` isn't an
+    int/float.
+    """
+    if po_amt is None or not isinstance(invoice_amt, (int, float)):
+        return None
+    df = pd.DataFrame(
+        [
+            {"source": "Invoice", "amount": invoice_amt, "kind": status},
+            {"source": "Purchase order", "amount": po_amt, "kind": "reference"},
+        ]
+    )
+    order = ["Invoice", "Purchase order"]
+    kind_scale = alt.Scale(
+        domain=["within tolerance", "outside tolerance", "reference"],
+        range=[INCREASE_COLOR, DECREASE_COLOR, TOTAL_COLOR],
+    )
+    bars = alt.Chart(df).mark_bar(size=30).encode(
+        y=alt.Y("source:N", sort=order, title=None),
+        x=alt.X("amount:Q", title="Amount"),
+        color=alt.Color("kind:N", scale=kind_scale, legend=None),
+        tooltip=[
+            alt.Tooltip("source:N", title="Source"),
+            alt.Tooltip("amount:Q", title="Amount", format=",.2f"),
+        ],
+    )
+    labels = alt.Chart(df).mark_text(align="left", dx=3).encode(
+        y=alt.Y("source:N", sort=order),
+        x=alt.X("amount:Q"),
+        text=alt.Text("amount:Q", format=",.2f"),
+    )
+    gate = (
+        alt.Chart(pd.DataFrame({"gate": [po_amt + tolerance, po_amt - tolerance]}))
+        .mark_rule(strokeDash=[6, 4], color=TOTAL_COLOR)
+        .encode(x=alt.X("gate:Q"))
+    )
+    return (bars + gate + labels).properties(
+        title=f"Invoice vs. purchase order (±{tolerance:,.0f} tolerance, dashed)"
+    )
+
+
+def match_status_chart(rows: pd.DataFrame, attribute_order: list):
+    """Grid of the three-way match result: one cell per (attribute, source)
+    pair, colored by match status.
+
+    `rows` needs columns `attribute` (str), `source` (str), and `status`
+    ("match"/"mismatch"/"not available"). A `mark_text` layer renders the
+    status as "OK" / "X" / "—" on top of the color grid -- a redundant,
+    non-color encoding so the grid stays readable without relying on color
+    perception. That glyph is derived into a new column in-function; its
+    text color is left unset (themed), same as everywhere else in this
+    module.
+
+    Returns `None` when `rows` is empty or `None`.
+    """
+    if rows is None or rows.empty:
+        return None
+    df = rows.copy()
+    glyph = {"match": "OK", "mismatch": "X", "not available": "—"}
+    df["glyph"] = df["status"].map(glyph)
+
+    cells = alt.Chart(df).mark_rect().encode(
+        x=alt.X("source:N", title=None),
+        y=alt.Y("attribute:N", sort=attribute_order, title=None),
+        color=alt.Color(
+            "status:N", scale=_MATCH_SCALE, legend=alt.Legend(title=None, orient="bottom")
+        ),
+        tooltip=[
+            alt.Tooltip("attribute:N", title="Attribute"),
+            alt.Tooltip("source:N", title="Source"),
+            alt.Tooltip("status:N", title="Status"),
+        ],
+    )
+    labels = alt.Chart(df).mark_text().encode(
+        x=alt.X("source:N"),
+        y=alt.Y("attribute:N", sort=attribute_order),
+        text=alt.Text("glyph:N"),
+    )
+    return (cells + labels).properties(title="Three-way match")
+
+
+def exception_severity_chart(exceptions: pd.DataFrame):
+    """Horizontal bars of control exceptions ranked by severity.
+
+    `exceptions` needs columns `code` (str), `severity` (str), `rank` (int,
+    4=critical down to 1=low), and an optional `detail` column shown in the
+    tooltip when present. The x-axis is drawn on the numeric `rank` but
+    labeled with the severity names via `labelExpr`, so there is no legend
+    -- the axis already names every severity the color encodes, and a
+    legend next to it would just repeat that.
+
+    Returns `None` when `exceptions` is empty or `None`.
+    """
+    if exceptions is None or exceptions.empty:
+        return None
+    tooltip = [
+        alt.Tooltip("code:N", title="Code"),
+        alt.Tooltip("severity:N", title="Severity"),
+    ]
+    if "detail" in exceptions.columns:
+        tooltip.append(alt.Tooltip("detail:N", title="Detail"))
+    return (
+        alt.Chart(exceptions)
+        .mark_bar()
+        .encode(
+            y=alt.Y("code:N", sort=alt.EncodingSortField("rank", order="descending"), title=None),
+            x=alt.X(
+                "rank:Q",
+                title=None,
+                scale=alt.Scale(domain=[0, 4]),
+                axis=alt.Axis(
+                    values=[1, 2, 3, 4],
+                    labelExpr="['','low','medium','high','critical'][datum.value]",
+                ),
+            ),
+            color=alt.Color("severity:N", scale=_SEVERITY_SCALE, legend=None),
+            tooltip=tooltip,
+        )
+        .properties(title="Control exceptions by severity")
+    )
+
+
+def action_owner_chart(actions: pd.DataFrame):
+    """Horizontal bars of action-plan item counts per owner, stacked by
+    priority -- replaces a raw action-plan table so "who has the most P1s"
+    is a glance instead of a scan down a column.
+
+    `actions` needs one row per action, with columns `owner` (str) and
+    `priority` ("P1"/"P2"/"P3"). `order=alt.Order("priority:N")` keeps P1
+    stacked nearest the axis on every bar, so the most urgent load on each
+    owner is always the segment closest to the axis and easiest to compare
+    across owners.
+
+    Returns `None` when `actions` is empty or `None`.
+    """
+    if actions is None or actions.empty:
+        return None
+    return (
+        alt.Chart(actions)
+        .mark_bar()
+        .encode(
+            y=alt.Y("owner:N", sort="-x", title=None),
+            x=alt.X("count():Q", title="Actions", axis=alt.Axis(tickMinStep=1)),
+            color=alt.Color("priority:N", scale=_PRIORITY_SCALE, legend=alt.Legend(title="Priority")),
+            order=alt.Order("priority:N"),
+            tooltip=[
+                alt.Tooltip("owner:N", title="Owner"),
+                alt.Tooltip("priority:N", title="Priority"),
+                alt.Tooltip("count():Q", title="Actions"),
+            ],
+        )
+        .properties(title="Action plan — who owns what, by priority")
+    )
+
+
+def recurring_drivers_chart(edges: pd.DataFrame):
+    """Recurrence timeline of memory-graph driver edges: one point per
+    (driver, period) the driver fired in. This is the visual evidence for
+    the app's "intuition compounds across runs" claim, which a flat
+    6-column sidebar table was not making.
+
+    `edges` needs columns `driver` (str), `account` (str), `period` (str,
+    "YYYY-MM"), `delta` (float), and `share` (float) -- one row per period
+    the memory graph has recorded a driver firing. Drivers are sorted
+    top-to-bottom by the number of distinct periods they've been seen in,
+    descending (computed in-function), so the most persistent drivers
+    anchor the top. Point size encodes `abs_share` (`share` magnitude,
+    computed in-function since a size scale needs a non-negative field);
+    color encodes `direction`, derived from `delta >= 0` -- the same idiom
+    `movement_vs_gate_chart` uses for its bar direction.
+
+    The tooltip reports that same magnitude, not the raw signed `share`.
+    The memory graph stores `share` as driver delta over ACCOUNT delta, so
+    a driver that rose while its account fell carries a negative share --
+    and a tooltip reading "direction: increase, Delta: +1,405, Share: -2%"
+    just looks broken. Magnitude is what the point size already encodes;
+    direction is carried by the color and the signed delta beside it.
+
+    Returns `None` when `edges` is empty or `None`.
+    """
+    if edges is None or edges.empty:
+        return None
+    df = edges.copy()
+    df["abs_share"] = df["share"].abs()
+    df["direction"] = df["delta"].apply(lambda d: "increase" if d >= 0 else "decrease")
+    order = df.groupby("driver")["period"].nunique().sort_values(ascending=False).index.tolist()
+    direction_scale = alt.Scale(domain=["increase", "decrease"], range=[INCREASE_COLOR, DECREASE_COLOR])
+
+    return (
+        alt.Chart(df)
+        .mark_circle(opacity=0.85)
+        .encode(
+            x=alt.X("period:O", title=None, axis=alt.Axis(labelAngle=-45)),
+            y=alt.Y("driver:N", sort=order, title=None),
+            size=alt.Size("abs_share:Q", scale=alt.Scale(range=[30, 400]), legend=None),
+            color=alt.Color("direction:N", scale=direction_scale, legend=alt.Legend(title=None)),
+            tooltip=[
+                alt.Tooltip("driver:N", title="Driver"),
+                alt.Tooltip("account:N", title="Account"),
+                alt.Tooltip("period:O", title="Period"),
+                alt.Tooltip("delta:Q", title="Delta", format="+,.2f"),
+                alt.Tooltip("abs_share:Q", title="Share of account move", format=".0%"),
+            ],
+        )
+        .properties(title="Recurring drivers — every period the memory graph has seen them fire")
+    )
+
+
+def driver_share_chart(drivers: pd.DataFrame, account_delta: float):
+    """Compact per-finding concentration strip: one normalized stacked bar
+    showing what share of the account's move each driver accounts for.
+
+    `drivers` needs the same columns `driver_contribution_chart` takes --
+    `member_name`, `delta`, `cohort` -- one row per driver for a single
+    finding. Only the top few drivers are ever passed in, so they rarely
+    account for the whole move; when the unexplained remainder exceeds a
+    0.01 tolerance, one `"Other"` row is appended holding it -- the same
+    "fold the gap into one step" reasoning `bridge_chart` documents for its
+    residual step. That row carries its own `delta` so the tooltip reads a
+    real number rather than a blank.
+
+    The bar is sized by each driver's share of the total *absolute*
+    movement, not by `delta / account_delta`. Drivers routinely run in both
+    directions at once (a cohort expanding while another churns), and a
+    signed share fed to `stack="normalize"` splits into competing positive
+    and negative stacks that no longer read as "share of the move" -- with
+    offsetting drivers a single member can even exceed 100%. Magnitude
+    share is the question this strip actually answers: how concentrated was
+    the move, and in whom. Direction is not lost -- it stays in the cohort
+    color and in the signed `delta` tooltip.
+
+    Returns `None` if `drivers` is empty/None, or if `account_delta` is
+    `None` or zero, or if every driver delta is zero (nothing to apportion).
+    """
+    if drivers is None or drivers.empty:
+        return None
+    if account_delta is None or account_delta == 0:
+        return None
+    df = drivers.copy()
+    residual = float(account_delta) - float(df["delta"].sum())
+    if abs(residual) > abs(float(account_delta)) * 0.01:
+        other = pd.DataFrame(
+            [{"member_name": "Other drivers", "delta": residual, "cohort": "other"}]
+        )
+        df = pd.concat([df, other], ignore_index=True)
+    df["magnitude"] = df["delta"].abs()
+    total_magnitude = df["magnitude"].sum()
+    if total_magnitude == 0:
+        return None
+    df["share"] = df["magnitude"] / total_magnitude
+    cohort_scale = alt.Scale(
+        domain=list(COHORT_COLORS) + ["other"],
+        range=list(COHORT_COLORS.values()) + ["#95a5a6"],
+    )
+    return (
+        alt.Chart(df)
+        .mark_bar()
+        .encode(
+            x=alt.X("share:Q", stack="normalize", axis=alt.Axis(format="%"), title=None),
+            color=alt.Color("cohort:N", scale=cohort_scale, legend=alt.Legend(title="Cohort")),
+            order=alt.Order("share:Q", sort="descending"),
+            tooltip=[
+                alt.Tooltip("member_name:N", title="Driver"),
+                alt.Tooltip("share:Q", title="Share of movement", format=".0%"),
+                alt.Tooltip("delta:Q", title="Delta", format="+,.2f"),
+            ],
+        )
+        .properties(height=42, title="Concentration — share of the account's move")
+    )

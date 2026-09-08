@@ -41,7 +41,7 @@ Two kinds of number live in there, asserted differently:
 
 - **Planted amounts** overwrite the RNG series (`ENTERPRISE_FLAGSHIP`, the
   `25_000` sponsorship, the `40_000` legal fee, the `8/11/15k` hosting
-  overruns, the `5_000 -> 30_000` insurance true-up). Exact, asserted exactly.
+  overruns). Exact, asserted exactly.
 - **Base series** come from `smooth_series` with ±3–5% uniform noise. Anything
   derived from them carries a tolerance, and where the noise genuinely decides
   an outcome the entry is marked `report_only` rather than guessed at.
@@ -56,7 +56,7 @@ Two kinds of number live in there, asserted differently:
 | **Concentration stat** | Every `graph._concentration_note` produced during the replay is re-derived from the transaction CSVs in plain Python — no DuckDB, no `slicer` — and compared. The driver deltas backing it are compared the same way. | Yes |
 | **Concentration edge case** | The documented case where more than 3 drivers never clear 60% cumulative must yield an *empty* note, not a wrong one. | Yes, when the dataset produces an instance; otherwise reported as 0 instances |
 | **Memory after replay** | The seasonal `6000::TechConf Expo` edge reads `seen_before=True, streak=0` at 2026-08 (a gap year, not a run). The `5000::CloudBeam Compute` edge is recorded for 2026-06. A churned customer (`MID-04`) and a one-off vendor (`Latham Legal Advisors`) never reappear as drivers after their last real period. | Yes |
-| **Tie-out** | Account 7000 reports 0% subledger coverage in every period and produces a `P1` / `Controller / Accounting` action every period; its summary amounts match the planted `5_000` baseline and `30_000` true-up. | Yes |
+| **Tie-out** | Every account reports 100% subledger coverage in every period, so no tie-out gap task is ever raised. | Yes |
 | **Detection precision / false-positive rate** | What fraction of all findings sit in a comparison/account with no planted story. | **No — reported only** |
 
 ### Why precision is reported and not asserted

@@ -13,6 +13,13 @@ MODAL_QWEN_URL = os.getenv("MODAL_QWEN_URL", "")
 MODAL_KEY = os.getenv("MODAL_KEY", "")
 MODAL_SECRET = os.getenv("MODAL_SECRET", "")
 QWEN_MODEL_NAME = "qwen-reasoner"
+# Per-request ceiling on a call to that endpoint. It is scale-to-zero, so a
+# first call after idle can sit in a GPU cold start for minutes -- and a
+# minutes-long call inside a Streamlit script run is not a slow page, it is a
+# lost one: the run gets cancelled and the result never renders. Every LLM
+# caller in this codebase has a deterministic fallback, so a timeout costs
+# narrative polish, not the analysis.
+LLM_TIMEOUT_S = float(os.getenv("LLM_TIMEOUT_S", "25"))
 
 DB_PATH = ROOT / os.getenv("LEDGER_DB", "data/ledger.db")
 OUT_DIR = ROOT / "out"
@@ -43,4 +50,10 @@ MATERIALITY_FLOOR = 5_000.0
 ANOMALY_Z = 2.0
 # Accounts drilled into per run, and cohort drivers reported per account.
 MAX_DRILLDOWNS = 6
+# When NOTHING clears the materiality gate, drill this many of the largest
+# movements anyway. Roughly half the periods in a normal ledger are quiet, and
+# "no material variances" plus an empty page is indistinguishable from a broken
+# run to the person reading it. These are reported as informational (P3) and
+# never counted as material findings -- the gate still means what it says.
+REVIEW_FALLBACK_N = 3
 MAX_DRIVERS = 5

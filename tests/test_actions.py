@@ -9,7 +9,7 @@ material finding and a subledger tie-out gap.
 from app.flux import actions
 
 
-def _finding(account_code="7000", account_name="Insurance", priority="P3", delta=25_000.0):
+def _finding(account_code="7000", account_name="Accrued Liabilities", priority="P3", delta=25_000.0):
     return {
         "account_code": account_code,
         "account_name": account_name,
@@ -21,7 +21,7 @@ def _finding(account_code="7000", account_name="Insurance", priority="P3", delta
     }
 
 
-def _gap(account_code="7000", account_name="Insurance", coverage_pct=0.0, gap=5_000.0):
+def _gap(account_code="7000", account_name="Accrued Liabilities", coverage_pct=0.0, gap=5_000.0):
     return {
         "account_code": account_code,
         "account_name": account_name,
@@ -31,9 +31,9 @@ def _gap(account_code="7000", account_name="Insurance", coverage_pct=0.0, gap=5_
 
 
 def test_account_that_is_both_a_finding_and_a_gap_gets_one_row():
-    """Insurance in the premium-true-up month is materially up AND has 0%
-    subledger coverage. Emitting a task for each produced two near-identical
-    rows at different priorities for one underlying problem."""
+    """An accrual trued up in a month it does not reconcile is materially up
+    AND has 0% subledger coverage. Emitting a task for each produced two
+    near-identical rows at different priorities for one underlying problem."""
     plan = actions.build_plan([_finding()], [_gap()])
     assert len(plan) == 1
     assert plan[0]["account_code"] == "7000"
@@ -85,3 +85,35 @@ def test_full_coverage_produces_no_action_at_all():
 def test_a_large_gap_that_is_mostly_covered_is_not_p1():
     """P1 needs both a material amount and genuinely poor coverage."""
     assert actions.gap_priority(80.0, 30_000.0) == "P2"
+
+
+# --- a gap that did not move is monitoring, not this month's action ---------
+
+
+def test_an_unchanged_gap_drops_to_monitoring():
+    """A permanent summary-only accrual is 0%-covered in every period. Judged on
+    coverage alone it reprinted the identical P2 'confirm this accrual' task
+    every month until the reader learned to skip the row."""
+    plan = actions.build_plan(
+        [],
+        [{**_gap(), "summary_amt": 5_000.0}],
+        [{"account_code": "7000", "delta": 0.0}],
+    )
+    assert plan[0]["priority"] == "P3"
+    assert "unchanged" in plan[0]["task"]
+
+
+def test_a_gap_that_moved_keeps_its_coverage_priority():
+    plan = actions.build_plan(
+        [],
+        [{**_gap(), "summary_amt": 30_000.0, "gap": 30_000.0}],
+        [{"account_code": "7000", "delta": 25_000.0}],
+    )
+    assert plan[0]["priority"] == actions.gap_priority(0.0, 30_000.0)
+    assert "Confirm the Accrued Liabilities accrual" in plan[0]["task"]
+
+
+def test_without_variances_the_old_two_argument_behavior_is_unchanged():
+    plan = actions.build_plan([], [_gap()])
+    assert plan[0]["priority"] == "P2"
+    assert "Confirm the Accrued Liabilities accrual" in plan[0]["task"]

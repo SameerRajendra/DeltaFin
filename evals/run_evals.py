@@ -24,9 +24,9 @@ What it scores:
   5. Memory after replay     -- the seasonal edge reads seen_before/streak=0,
                                 the hosting edge is recorded, and a churned
                                 customer stops appearing as a driver.
-  6. Tie-out                 -- the summary-only insurance accrual reports 0%
-                                subledger coverage every period and lands a P1
-                                Controller/Accounting action every period.
+  6. Tie-out                 -- every account reconciles to its transaction
+                                detail (100% coverage, every period), so no
+                                tie-out gap task is ever raised.
 
 Run it:
 
@@ -232,7 +232,17 @@ def replay():
                     "variances": state.get("variances") or [],
                     "ranked": state.get("ranked") or [],
                     "drilldowns": state.get("drilldowns") or [],
-                    "findings": state.get("findings") or [],
+                    # Material findings only. A quiet comparison now also
+                    # carries the top movements drilled for context (P3,
+                    # informational, explicitly below the gate); scoring those
+                    # as detections would report a false-positive rate for rows
+                    # the agent already labelled as not findings.
+                    "findings": [
+                        f for f in (state.get("findings") or []) if not f.get("informational")
+                    ],
+                    "informational": [
+                        f for f in (state.get("findings") or []) if f.get("informational")
+                    ],
                     "action_plan": state.get("action_plan") or [],
                     "tie_out": state.get("tie_out") or [],
                 }
@@ -483,71 +493,44 @@ def score_memory(card, gt, results):
 
 
 def score_tie_out(card, gt, results):
-    story = next(s for s in gt["stories"] if s["id"] == "insurance_accrual")
-    account = story["account_code"]
-    spec = story["tie_out_every_period"]
+    """Every account in this dataset reconciles to its transaction detail.
 
-    bad_coverage, missing_action = [], []
+    The seed used to carry one deliberately summary-only accrual so this
+    section had a gap to find. That account was removed, so what is asserted
+    here is the other half of the same property: 100% coverage on every account
+    in every period, and therefore no tie-out gap task anywhere in the action
+    plans. A regression that dropped or double-counted subledger rows for an
+    account breaks this, which is what the check is for.
+
+    Returns an empty list -- there is no longer a planted accrual story for the
+    caller to hand on to score_story.
+    """
+    bad_coverage, spurious_actions = [], []
     for r in results:
-        row = next((t for t in r["tie_out"] if t["account_code"] == account), None)
-        if row is None or row["coverage_pct"] != spec["coverage_pct"]:
-            bad_coverage.append(f"{r['period']}: {row and row['coverage_pct']}")
-        items = [
-            i
-            for i in r["action_plan"]
-            if i["account_code"] == account
-            and i["priority"] == spec["action_priority"]
-            and i["owner"] == spec["action_owner"]
-        ]
-        if not items:
-            missing_action.append(r["period"])
+        for row in r["tie_out"]:
+            if row["coverage_pct"] != 100.0:
+                bad_coverage.append(
+                    f"{r['period']} {row['account_code']} {row['account_name']}: "
+                    f"{row['coverage_pct']}%"
+                )
+        for item in r["action_plan"]:
+            if "Subledger tie-out gap" in (item.get("context") or ""):
+                spurious_actions.append(f"{r['period']} {item['account_code']}")
 
+    accounts = len(results[0]["tie_out"]) if results else 0
     card.check(
         "Tie-out",
-        f"account {account} reports {spec['coverage_pct']}% subledger coverage in all "
-        f"{len(results)} periods",
+        f"all {accounts} accounts report 100% subledger coverage in all {len(results)} periods",
         not bad_coverage,
-        "; ".join(bad_coverage) or "0.0% every period",
+        "; ".join(bad_coverage) or f"100% on every account, every period",
     )
     card.check(
         "Tie-out",
-        f"account {account} produces a {spec['action_priority']} "
-        f"'{spec['action_owner']}' action in all {len(results)} periods",
-        not missing_action,
-        "; ".join(missing_action) or "present every period",
+        "no tie-out gap task is raised in any period",
+        not spurious_actions,
+        "; ".join(spurious_actions) or "no gap tasks, as expected for a fully reconciled ledger",
     )
-
-    # The planted summary amounts themselves, straight off the CSVs.
-    baseline = story["exact_amounts"]["baseline"]
-    spike_period = story["spike"]["period"]
-    spike_amt = story["exact_amounts"][spike_period]
-    wrong = []
-    for r in results:
-        rows = {row["account_code"]: float(row["amount"]) for row in _summary_rows(r["period"])}
-        expected = spike_amt if r["period"] == spike_period else baseline
-        if rows.get(account) != expected:
-            wrong.append(f"{r['period']}: {rows.get(account)} != {expected}")
-    card.check("Tie-out", f"account {account} summary amounts match the planted series",
-               not wrong, "; ".join(wrong) or "every period matches")
-
-    # The true-up and its reversal are ordinary account variances, so they are
-    # handed back to be scored by the same path every other story uses.
-    sub_stories = []
-    for key in ("spike", "reversal"):
-        sub = story[key]
-        sub_stories.append(
-            {
-                "id": f"insurance_accrual.{key}",
-                "account_code": account,
-                "period": sub["period"],
-                "prior_period": sub["prior_period"],
-                "material": sub["material"],
-                "materiality_reason": sub["materiality_reason"],
-                "exact": {"delta": sub["delta"]},
-                "slice_available": sub.get("slice_available", False),
-            }
-        )
-    return sub_stories
+    return []
 
 
 def score_concentration_everywhere(card, results, max_drivers, tol_abs):

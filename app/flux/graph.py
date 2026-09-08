@@ -208,6 +208,25 @@ def build_graph(llm=None, conn=None, isolated=False):
     """
     conn = conn or ingest.connect()
 
+    # Every LLM call in this graph is narration over facts the deterministic
+    # nodes already computed, so a provider failure must degrade the prose, not
+    # the run. `llm_state` also latches: the endpoint is scale-to-zero, and once
+    # one call has timed out the rest of this run would pay the same timeout
+    # again per drilldown (MAX_DRILLDOWNS + 1 of them), which is exactly the
+    # multi-minute stall the timeout exists to prevent.
+    llm_state = {"available": llm is not None}
+
+    def _invoke_llm(prompt, config=None):
+        """Model text, or None if the model is unavailable, slow, or failing."""
+        if not llm_state["available"]:
+            return None
+        try:
+            response = llm.invoke(prompt, config=config)
+        except Exception:  # noqa: BLE001 -- any provider failure falls back to the deterministic path
+            llm_state["available"] = False
+            return None
+        return response.content if hasattr(response, "content") else str(response)
+
     def ingest_periods(state: FluxState) -> dict[str, Any]:
         periods = ingest.list_periods(conn)
         period = state.get("period") or periods[-1]
@@ -223,6 +242,11 @@ def build_graph(llm=None, conn=None, isolated=False):
         from app import config
 
         ranked = variance.rank_materiality(state["variances"])[: config.MAX_DRILLDOWNS]
+        if not ranked:
+            # Nothing material. Drill the largest movements anyway rather than
+            # handing back an empty page: same slicing, same narration, but
+            # tagged informational so the materiality gate keeps its meaning.
+            ranked = variance.top_movers(state["variances"], config.REVIEW_FALLBACK_N)
         return {"ranked": ranked}
 
     def slice_drivers_node(state: FluxState) -> dict[str, Any]:
@@ -245,7 +269,8 @@ def build_graph(llm=None, conn=None, isolated=False):
     def explain_drivers(state: FluxState, config=None) -> dict[str, Any]:
         findings = []
         for d in state["drilldowns"]:
-            if llm is not None:
+            parsed = None
+            if llm_state["available"]:
                 prompt = EXPLAIN_PROMPT.format(
                     account_name=d["account_name"],
                     account_code=d["account_code"],
@@ -259,18 +284,14 @@ def build_graph(llm=None, conn=None, isolated=False):
                     memory_lines=_memory_lines(d),
                     tie_out_note=_tie_out_note(state, d["account_code"]),
                 )
-                response = llm.invoke(prompt, config=config)
-                text = response.content if hasattr(response, "content") else str(response)
-                match = re.search(r"\{.*\}", text, re.DOTALL)
-                parsed = None
+                text = _invoke_llm(prompt, config)
+                match = re.search(r"\{.*\}", text, re.DOTALL) if text else None
                 if match:
                     try:
                         parsed = json.loads(match.group(0))
                     except json.JSONDecodeError:
                         parsed = None
-                if not parsed:
-                    parsed = _template_finding(d, state)
-            else:
+            if not parsed:
                 parsed = _template_finding(d, state)
 
             recurring_count = 1
@@ -278,10 +299,26 @@ def build_graph(llm=None, conn=None, isolated=False):
                 if info.get("seen_before") and info.get("streak"):
                     recurring_count = max(recurring_count, info["streak"] + 1)
 
-            priority = parsed.get("priority")
-            if priority not in ("P1", "P2", "P3"):
-                priority = actions_module.default_priority(d)
+            informational = d.get("materiality_reason") == variance.BELOW_THRESHOLD_REASON
+            if informational:
+                # Not negotiable by the model: an account that did not clear the
+                # gate cannot come back as this month's P1 because the prose
+                # sounded urgent.
+                priority = "P3"
+            else:
+                priority = parsed.get("priority")
+                if priority not in ("P1", "P2", "P3"):
+                    priority = actions_module.default_priority(d)
             owner = parsed.get("owner") or actions_module.owner_for(d["account_code"], d.get("account_type", ""))
+            action = parsed.get("action", "")
+            if informational:
+                # The model was asked to explain a movement, and it will happily
+                # propose work for one; overwrite it. Nothing here cleared the
+                # gate, so the only honest instruction is "note it".
+                action = (
+                    f"Below materiality (${abs(d['delta']):,.2f}, {_fmt_pct(d['pct'])}) — "
+                    "no action required, noted for trend."
+                )
 
             findings.append(
                 {
@@ -290,9 +327,10 @@ def build_graph(llm=None, conn=None, isolated=False):
                     "delta": d["delta"],
                     "pct": d["pct"],
                     "materiality_reason": d["materiality_reason"],
+                    "informational": informational,
                     "headline": parsed.get("headline", ""),
                     "why": parsed.get("why", ""),
-                    "action": parsed.get("action", ""),
+                    "action": action,
                     "priority": priority,
                     "owner": owner,
                     "confidence": "high" if d["slice"].get("available") else "low",
@@ -303,20 +341,22 @@ def build_graph(llm=None, conn=None, isolated=False):
         return {"findings": findings}
 
     def compile_action_plan(state: FluxState) -> dict[str, Any]:
-        plan = actions_module.build_plan(state["findings"], state.get("tie_out") or [])
+        plan = actions_module.build_plan(
+            state["findings"], state.get("tie_out") or [], state.get("variances") or []
+        )
         return {"action_plan": plan}
 
     def synthesize_brief(state: FluxState, config=None) -> dict[str, Any]:
         findings_text = "\n".join(
             f"- {f['account_name']}: {f['headline']} {f['why']}" for f in state["findings"]
         ) or "No material variances this period."
-        if llm is not None and state["findings"]:
+        if llm_state["available"] and state["findings"]:
             prompt = SYNTHESIS_PROMPT.format(
                 current_period=state["period"], prior_period=state["prior_period"], findings_text=findings_text
             )
-            response = llm.invoke(prompt, config=config)
-            text = response.content if hasattr(response, "content") else str(response)
-            return {"brief_text": text.strip()}
+            text = _invoke_llm(prompt, config)
+            if text:
+                return {"brief_text": text.strip()}
         header = f"Variance summary, {state['prior_period']} -> {state['period']}:\n"
         return {"brief_text": header + findings_text}
 

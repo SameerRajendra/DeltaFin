@@ -73,8 +73,14 @@ def gap_priority(coverage_pct: float, gap_amount: float = 0.0) -> str | None:
     return "P3"
 
 
-def build_plan(findings: list[dict], tie_out: list[dict]) -> list[dict]:
-    """One prioritized, owned task per material finding and per uncovered tie-out gap."""
+def build_plan(findings: list[dict], tie_out: list[dict], variances: list[dict] | None = None) -> list[dict]:
+    """One prioritized, owned task per finding and per uncovered tie-out gap.
+
+    `variances` is optional so existing two-argument callers keep working; it is
+    what lets a gap that did not move this period be recognised as such (see
+    the static-accrual branch below).
+    """
+    delta_by_code = {v["account_code"]: v["delta"] for v in variances or []}
     items = []
     for f in findings:
         priority = f.get("priority") or "P2"
@@ -95,17 +101,35 @@ def build_plan(findings: list[dict], tie_out: list[dict]) -> list[dict]:
         priority = gap_priority(row["coverage_pct"], row.get("gap", 0.0))
         if not priority:
             continue
-        gap_task = (
-            f"Confirm the {row['account_name']} accrual: only {row['coverage_pct']}% "
-            f"traced to subledger detail (gap ${row['gap']:,.2f})."
-        )
+        # A gap that did not move is not this period's news. A permanent
+        # summary-only accrual is 0%-covered in every period forever, so
+        # judging it on coverage alone reprinted the identical "confirm this
+        # accrual" task at the same priority every single month -- the reader
+        # learns to skip the row, which is the opposite of what an action list
+        # is for. What is actionable is a gap that CHANGED; an unchanged one
+        # drops to monitoring and says how long it has been static.
+        account_delta = delta_by_code.get(row["account_code"])
+        unchanged = account_delta is not None and abs(account_delta) < 0.01
+        if unchanged:
+            priority = "P3"
+            gap_task = (
+                f"{row['account_name']} is a summary-only balance: unchanged at "
+                f"${row.get('summary_amt', 0.0):,.2f} this period, with {row['coverage_pct']}% traced to "
+                f"subledger detail. No movement to explain — monitor, and confirm the accrual "
+                f"at year-end."
+            )
+        else:
+            gap_task = (
+                f"Confirm the {row['account_name']} accrual: only {row['coverage_pct']}% "
+                f"traced to subledger detail (gap ${row['gap']:,.2f})."
+            )
         existing = by_account.get(row["account_code"])
         if existing is not None:
             # One row per account. An account can be both materially moved AND
-            # short on subledger coverage -- Insurance in the premium-true-up
-            # month is exactly that -- and emitting a task for each produced two
-            # near-identical rows at different priorities for one underlying
-            # problem. Keep the more urgent of the two, and say both reasons.
+            # short on subledger coverage -- an accrual trued up in the same
+            # month it stops reconciling is exactly that -- and emitting a task
+            # for each produced two near-identical rows at different priorities
+            # for one underlying problem. Keep the more urgent, say both reasons.
             if _PRIORITY_ORDER.get(priority, 9) < _PRIORITY_ORDER.get(existing["priority"], 9):
                 existing["priority"] = priority
                 existing["priority_label"] = _PRIORITY_LABEL.get(priority, "")

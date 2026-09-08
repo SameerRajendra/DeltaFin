@@ -21,5 +21,11 @@ def get_llm():
             base_url=config.MODAL_QWEN_URL.rstrip("/") + "/v1",
             api_key=f"{config.MODAL_KEY}.{config.MODAL_SECRET}",
             temperature=0,
+            # Bounded, and no retries: the client's own default is a ten-minute
+            # wait with retries on top, which turns one cold start into a hang
+            # that outlives the UI session waiting on it. Fail fast into the
+            # deterministic path instead -- see config.LLM_TIMEOUT_S.
+            timeout=config.LLM_TIMEOUT_S,
+            max_retries=0,
         )
     return None

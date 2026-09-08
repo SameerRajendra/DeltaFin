@@ -84,6 +84,23 @@ def is_material(v: dict) -> tuple[bool, str]:
     return False, ""
 
 
+BELOW_THRESHOLD_REASON = "below-threshold-review"
+
+
+def top_movers(variances: list[dict], limit: int) -> list[dict]:
+    """The largest movements in a period where nothing was material.
+
+    Tagged with their own materiality_reason so every consumer downstream can
+    tell these apart from a real finding: they are informational, they are
+    never counted as material, and they are forced to P3. Accounts that did not
+    move at all are excluded -- a 0.00 delta has nothing to explain, and a
+    static accrual would otherwise fill this list every single period.
+    """
+    moved = [v for v in variances if abs(v["delta"]) > 0]
+    moved.sort(key=lambda v: abs(v["delta"]), reverse=True)
+    return [{**v, "materiality_reason": BELOW_THRESHOLD_REASON} for v in moved[:limit]]
+
+
 def rank_materiality(variances: list[dict]) -> list[dict]:
     """Materiality-filtered, ranked queue: biggest/oddest swings first."""
     ranked = []

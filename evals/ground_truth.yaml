@@ -14,7 +14,7 @@
 #
 #   * PLANTED amounts (the flagship enterprise revenue table, the 25,000
 #     TechConf sponsorship, the 40,000 legal fee, the 8/11/15k hosting
-#     overruns, the 5,000 -> 30,000 insurance true-up). These overwrite the
+#     overruns). These overwrite the
 #     RNG series in the generator, so they are exact and are asserted exactly.
 #
 #   * BASE series (`smooth_series`, +/-3-5% uniform noise on every period of
@@ -200,39 +200,6 @@ stories:
     # It reverses out in 2025-12 (churned, -40,000) and never recurs.
     absent_as_driver_after: "2025-12"
 
-  # -------------------------------------------------------------------------
-  - id: insurance_accrual
-    label: "Summary-only insurance accrual, zero subledger coverage"
-    source: "seed_flux.py insurance = [5_000.0] * N; insurance[IDX_INSURANCE_SPIKE] = 30_000.0"
-    account_code: "7000"
-    # No transaction rows are ever written for 7000, in any period.
-    tie_out_every_period:
-      coverage_pct: 0.0
-      action_priority: P1
-      action_owner: "Controller / Accounting"
-    exact_amounts:
-      baseline: 5000.00
-      "2026-05": 30000.00
-    # The true-up and its reversal are both exactly 25,000 -- precisely on the
-    # absolute gate, which is a `>=` comparison.
-    spike:
-      period: "2026-05"
-      prior_period: "2026-04"
-      material: true
-      materiality_reason: absolute-threshold
-      delta: 25000.00
-      # 7000 is neither 4xxx nor 5xxx/6xxx, so slicer._dimension_for returns
-      # None and the finding carries no drivers at all.
-      slice_available: false
-      confidence: low
-    reversal:
-      period: "2026-06"
-      prior_period: "2026-05"
-      material: true
-      materiality_reason: absolute-threshold
-      delta: -25000.00
-      slice_available: false
-
 # Comparisons in which NO story above was planted. Any finding the agent
 # produces in one of these is a candidate false positive -- "candidate", not
 # "confirmed", because the base series are genuinely noised and a real 12%
@@ -249,8 +216,6 @@ false_positive_policy:
     - {period: "2025-11", account_code: "6010"}   # legal fee in
     - {period: "2025-12", account_code: "6010"}   # legal fee out
     - {period: "2026-03", account_code: "4010"}   # Fabrikam churn
-    - {period: "2026-05", account_code: "7000"}   # insurance true-up
-    - {period: "2026-06", account_code: "7000"}   # true-up reverses
     - {period: "2026-06", account_code: "5000"}   # hosting overrun starts
     - {period: "2026-07", account_code: "5000"}   # overrun grows
     - {period: "2026-08", account_code: "5000"}   # overrun grows

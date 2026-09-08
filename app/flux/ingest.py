@@ -89,8 +89,9 @@ def tie_out(conn, period: str) -> list[dict]:
     """Per-account: does the subledger (txn detail) reconcile to the summary total?
 
     Returns one row per account with the summary amount, the subledger total,
-    and the coverage percentage -- 0% for a summary-only accrual line like
-    Insurance, honestly, rather than hiding the gap.
+    and the coverage percentage -- 0% for a summary-only accrual line, honestly,
+    rather than hiding the gap. The seeded dataset has no such account, so every
+    row there reports 100%; uploaded data commonly does.
     """
     rows = conn.execute(
         """

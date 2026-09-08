@@ -2,9 +2,10 @@
 
 Writes data/financials/summaries/YYYY-MM.csv and .../transactions/YYYY-MM.csv,
 one pair per period, Jan 2025 through Aug 2026. Every account's summary total
-reconciles exactly to the sum of its transaction-level detail, except the
-Insurance account (7000), which is deliberately summary-only (an accrual with
-no subledger) so the ingestion tie-out has something honest to report.
+reconciles exactly to the sum of its transaction-level detail, so `ingest.tie_out`
+reports 100% coverage for every account in every period. (There is deliberately
+no summary-only account here any more; the tie-out code path still exists and is
+covered by tests, it simply has nothing to flag in this dataset.)
 
 Planted stories a variance agent should be able to find and explain:
   - Enterprise revenue jumps 32% in the final month, three customers driving
@@ -14,8 +15,6 @@ Planted stories a variance agent should be able to find and explain:
     (2025 and 2026) -> a seasonal, YoY-recurring driver.
   - Fabrikam Mid churns out of Mid-Market revenue in 2026-03 and never returns.
   - A one-off M&A legal fee spikes G&A once (2025-11) and never recurs.
-  - Insurance (7000) gets a one-time premium true-up (2026-05) with zero
-    subledger detail behind it.
 
 Re-run any time; it always regenerates the full 20-month set deterministically
 (seeded RNG) so the agent's institutional memory is being tested against a
@@ -41,7 +40,6 @@ IDX = {p: i for i, p in enumerate(PERIODS)}
 IDX_CONFERENCE = [IDX["2025-08"], IDX["2026-08"]]
 IDX_LEGAL_FEE = IDX["2025-11"]
 IDX_CHURN_START = IDX["2026-03"]
-IDX_INSURANCE_SPIKE = IDX["2026-05"]
 IDX_HOSTING_OVERRUN = [IDX["2026-06"], IDX["2026-07"], IDX["2026-08"]]
 IDX_FLAGSHIP_PRIOR = IDX["2026-07"]
 IDX_FLAGSHIP_CURRENT = IDX["2026-08"]
@@ -55,7 +53,6 @@ ACCOUNTS = {
     "6010": ("G&A", "opex"),
     "6020": ("R&D", "opex"),
     "6100": ("Travel", "opex"),
-    "7000": ("Insurance", "other"),
 }
 
 ENTERPRISE_CUSTOMERS = [
@@ -129,9 +126,6 @@ def main():
 
     rnd_base = smooth_series(rng, 95_000, growth=0.006, noise=0.03)
     travel_base = smooth_series(rng, 15_000, growth=0.0, noise=0.05)
-
-    insurance = [5_000.0] * N
-    insurance[IDX_INSURANCE_SPIKE] = 30_000.0
 
     summaries_dir = config.FINANCIALS_DIR / "summaries"
     txns_dir = config.FINANCIALS_DIR / "transactions"
@@ -234,9 +228,6 @@ def main():
         add_txn("6100", "Money Ops US", "Sales", "AMER", "", "", "", "Corporate Travel Partners", travel_base[idx],
                  "T&E - travel partners", 18)
         summary_rows.append(("6100", *ACCOUNTS["6100"], round(travel_base[idx], 2)))
-
-        # --- Insurance: summary-only accrual, no subledger detail ---
-        summary_rows.append(("7000", *ACCOUNTS["7000"], round(insurance[idx], 2)))
 
         with (summaries_dir / f"{period}.csv").open("w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)

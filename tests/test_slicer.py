@@ -58,7 +58,8 @@ def test_dimension_for_opex_accounts_is_vendor():
 
 
 def test_dimension_for_other_accounts_is_none():
-    # 7000 Insurance -- the summary-only accrual.
+    # 7xxx: balance-sheet / accrual codes have no customer or vendor dimension
+    # to slice, so there is nothing to drill even when the account moves.
     assert slicer._dimension_for("7000") is None
 
 

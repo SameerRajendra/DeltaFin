@@ -5,6 +5,9 @@ modal>=1.5
 duckdb>=1.0
 openpyxl>=3.1
 streamlit>=1.38
+# ui/charts.py imports altair directly; today it resolves only as a transitive
+# dependency of streamlit, so pin it explicitly rather than rely on that.
+altair>=5.0
 python-dotenv>=1.0
 pypdf>=5.0
 pandas>=2.0

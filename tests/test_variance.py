@@ -223,3 +223,29 @@ def test_yoy_columns_are_none_without_a_year_ago_period(summary_conn):
     assert row["yoy_amt"] is None
     assert row["yoy_delta"] is None
     assert row["yoy_pct"] is None
+
+
+# --- top_movers: the quiet-period fallback ----------------------------------
+
+
+def _mover(code, name, delta):
+    return {"account_code": code, "account_name": name, "delta": delta, "pct": 0.01, "z_score": 0.0}
+
+
+def test_top_movers_returns_the_largest_absolute_movements():
+    movers = variance.top_movers(
+        [_mover("4000", "Revenue", 9_351.0), _mover("6000", "S&M", -2_616.0), _mover("5000", "COGS", 871.0)], 2
+    )
+    assert [m["account_code"] for m in movers] == ["4000", "6000"]
+
+
+def test_top_movers_tags_every_row_as_below_threshold():
+    movers = variance.top_movers([_mover("4000", "Revenue", 9_351.0)], 3)
+    assert movers[0]["materiality_reason"] == variance.BELOW_THRESHOLD_REASON
+
+
+def test_top_movers_skips_accounts_that_did_not_move():
+    """A flat account moves 0.00 in every period. Drilling it would fill the
+    fallback with the one account that has nothing to explain."""
+    movers = variance.top_movers([_mover("7000", "Accrual", 0.0), _mover("4000", "Revenue", 100.0)], 3)
+    assert [m["account_code"] for m in movers] == ["4000"]

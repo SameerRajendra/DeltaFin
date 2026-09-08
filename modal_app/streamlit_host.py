@@ -67,6 +67,12 @@ image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
         "streamlit>=1.38",
+        # ui/charts.py imports altair directly for every chart on both pages.
+        # It arrives transitively with streamlit today, so leaving it out worked
+        # by luck; pinned here for the same reason it is pinned in
+        # requirements.txt -- a streamlit release that drops the transitive dep
+        # would take the deployed page down on import, not degrade it.
+        "altair>=5.0",
         "pandas",
         "python-dotenv>=1.0",
         "langgraph>=0.2",
