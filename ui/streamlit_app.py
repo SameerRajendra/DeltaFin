@@ -255,7 +255,11 @@ def render_detail(conn, invoice):
                 + _match_rows("Amount", total, po_amount, bank["amount"] if bank else None, within_tolerance)
             )
             match_chart = charts.match_status_chart(
-                pd.DataFrame(match_rows), attribute_order=["Counterparty", "Reference", "Amount"]
+                pd.DataFrame(match_rows),
+                attribute_order=["Counterparty", "Reference", "Amount"],
+                # Reconciliation order, not alphabetical: the invoice arrives,
+                # it is matched to a PO, and the bank feed settles it last.
+                source_order=["Invoice", "Purchase order", "Bank feed"],
             )
             if match_chart is not None:
                 st.altair_chart(match_chart, use_container_width=True)

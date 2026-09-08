@@ -1,5 +1,46 @@
 # DeltaFin — an agentic variance-explanation system
 
+### ▶ [**Open the live demo**](https://sameerrajendra126--deltafin-ui-serve.modal.run) — no install, no login
+
+Deployed on Modal. It scales to zero, so the first load after an idle period
+takes ~20-30s to cold-start; after that it is instant. Two pages, both with
+seeded data already in them:
+
+- **Variance Explanation Agent** — pick any of the period comparisons in the
+  sidebar. `2026-07 → 2026-08` is the one with the story in it. Or upload your
+  own two CSVs in the panel at the top and it runs the real pipeline on them.
+- **AP Approval Inbox** — five reconciled invoices awaiting a human decision.
+  `INV-2001` shows a three-way match with a real control exception.
+
+<sub>Public and unauthenticated by design, for demo purposes. Uploaded data is
+processed in an isolated run and never enters the institutional memory built
+from the seeded ledger.</sub>
+
+![The variance agent: materiality gate, account movement by priority, and the cross-run memory graph](docs/screenshot-variance.png)
+
+<sub>The variance page. The gate is stated once; findings, actions, tie-out and
+exports sit behind tabs; the timeline underneath is the memory graph showing
+every period each driver has fired in — the evidence that the agent's read
+compounds across runs.</sub>
+
+![The AP inbox: three-way match grid, invoice-vs-PO tolerance chart, and the reviewer's decision panel](docs/screenshot-ap.png)
+
+<sub>The AP inbox. The match grid carries a redundant `OK`/`X`/`—` glyph so it
+reads without colour; the tolerance band is drawn as dashed rules; the reviewer's
+decision sits beside the evidence rather than behind a tab. Here the invoice is
+$990 over its PO against an $84 tolerance, so the agent recommends `hold`.</sub>
+
+---
+
+**At a glance** — Python · LangGraph · self-hosted Qwen2.5-7B on vLLM (Modal,
+A10G, scale-to-zero) · DuckDB · SQLite · Streamlit + Altair · 119 tests · CI ·
+a scored eval harness against a labelled dataset. Two LangGraph pipelines, ten
+and seven nodes. The LLM writes prose over already-computed numbers and never
+changes one, and every model call has a deterministic fallback — so the system
+runs end to end with no model configured at all.
+
+---
+
 Monthly account summaries and transaction-level CSVs go in; a prioritized,
 owned variance brief comes out. The bar it is built to clear is the move from
 *"Revenue increased 18%"* to *"Revenue increased 18%, driven by a 32% increase
@@ -92,6 +133,69 @@ cross-run memory graph.
   the driver decomposition is then SQL against those tables. The AP pipeline's
   semantic layer (`app/store.py`) is a separate SQLite database standing in for
   ERP / bank feed / vendor master.
+- **An interface built for the person who has to sign off.** Both pages are
+  chart-first (`ui/charts.py`, Altair): a waterfall bridging prior to current
+  balance, driver contribution by cohort, a concentration strip, subledger
+  coverage inverted so the *unreconciled* account is the longest bar rather
+  than the missing one, and a three-way-match grid carrying a redundant
+  `OK`/`X`/`—` glyph so it survives colourblindness and greyscale printing. The
+  AP reviewer's approve/reject panel is pinned beside the evidence, never
+  behind a tab. One fixed colour scale per field means a colour means the same
+  thing on every chart in the app.
+
+## AI technology, tools, and concepts implemented
+
+Everything below is in the repo and exercised by the demo above. The second
+table is deliberately included: what a system *doesn't* do, and why, says as
+much as what it does.
+
+### Agent architecture and orchestration
+
+| | Where | What it does |
+|---|---|---|
+| **LangGraph** state machines | `app/flux/graph.py`, `app/graph.py` | Two pipelines — 10 nodes (variance) and 7 (AP reconciliation) — as explicit typed-state graphs. Linear, no conditional edges: an audit trail is worth more here than dynamic routing. |
+| **Tool-free, computation-first agent design** | `app/flux/variance.py`, `slicer.py`, `actions.py` | The deterministic core computes every delta, z-score, materiality decision, cohort label, concentration share, priority and owner. The model is handed finished facts. |
+| **Human-in-the-loop approval** | `ui/streamlit_app.py`, `app/store.py` | The AP agent emits a *recommendation* (`hold`/`review`/`approve`), never a payment. A reviewer decides, and the decision is written to an `approvals` audit trail. |
+| **Closed feedback loop** | `app/flux/memory.py` | Confirm / Off-base on a finding writes a verdict onto the memory graph, which is read back into the next run's prompt. |
+
+### LLM serving and integration
+
+| | Where | What it does |
+|---|---|---|
+| **Self-hosted inference, not a vendor API key** | `modal_app/qwen_reasoner.py` | Qwen2.5-7B-Instruct under **vLLM 0.6.3** behind an OpenAI-compatible endpoint, on a Modal **A10G**. No `min_containers` — scales to zero, weights cached in a Modal Volume so a cold start re-downloads nothing. |
+| **Provider-agnostic client** | `app/llm.py` | `langchain-openai` `ChatOpenAI` pointed at that endpoint. Bounded timeout, `max_retries=0` — a cold start fails fast into the deterministic path instead of hanging the UI. |
+| **Graceful degradation as an invariant** | every LLM caller | With no endpoint configured, `explain_drivers` and `synthesize_brief` take template paths and the pipeline still produces a complete brief. The eval harness runs in exactly this mode. |
+| **Structured output with a parse fallback** | `app/flux/graph.py`, `app/extraction.py` | JSON is extracted and parsed from the response; a malformed reply falls through to deterministic logic rather than raising. |
+| **Prompt design constrained to narration** | `app/flux/graph.py` | The model is given computed drivers, shares and recalled history and asked to write prose over them. Nothing it emits changes a number. |
+| **Serverless GPU deployment** | `modal_app/` | Both the model endpoint and the Streamlit UI deploy to Modal; secrets are injected as a named Modal secret, never baked into the image. |
+
+### Data, memory, and retrieval
+
+| | Where | What it does |
+|---|---|---|
+| **Columnar analytical ingestion** | `app/flux/ingest.py` | DuckDB `read_csv_auto` over two file globs into typed in-memory tables; all driver decomposition is SQL. Includes a memory-ladder probe because DuckDB's auto-detected limit OOMs on the multi-file glob. |
+| **Cross-run memory as a knowledge graph** | `app/flux/memory.py` | `account_code::driver_key` edges in a JSON graph, plus an append-only SQLite history. "Has this vendor driven this account before, and for how many periods" is an **O(1) exact-key lookup**. |
+| **Semantic layer over a financial system of record** | `app/store.py` | SQLite standing in for ERP / bank feed / vendor master, queried for the three-way match. |
+| **Statistical anomaly detection** | `app/flux/variance.py` | Z-score against a 6-month trailing baseline, combined with absolute and percentage materiality gates and an explicit precedence order. |
+| **Data isolation guarantee** | `app/flux/uploads.py` | An uploaded company's figures run through the same graph with memory reads and writes disabled, so demo data never contaminates institutional history. |
+
+### Evaluation and engineering practice
+
+| | Where | What it does |
+|---|---|---|
+| **Scored eval harness against a labelled set** | `evals/` | The synthetic generator plants known stories; the harness replays all 19 comparisons and asserts detection, materiality reason, planted amounts, driver attribution and cohort labels. Results below. |
+| **Deterministic, reproducible evaluation** | `evals/run_evals.py` | Forces `get_llm()` to `None` so a scored run measures the pipeline, not model sampling. Non-zero exit on assertion failure. |
+| **Test suite and CI** | `tests/`, `.github/workflows/` | 119 tests. CI additionally runs `ruff --select F821,F811` across the app because a UI refactor once shipped a `NameError` visible only at render time. |
+| **Accessible, theme-aware visualization** | `ui/charts.py` | Altair throughout, one fixed colour scale per field, colourblind-safe (Okabe-Ito-derived), with redundant non-colour encodings where a status is being read. Pure functions: DataFrames in, charts out. |
+
+### Deliberately *not* used
+
+| | Why |
+|---|---|
+| **RAG / vector search / embeddings** | Memory here is a lookup on an exact composite key (`5000::CloudBeam Compute`), not a similarity search over past narratives. Nearest-neighbour retrieval would be slower, fuzzier and wrong for a question that has an exact answer. There are no embeddings in this repo. |
+| **Fine-tuning** | The task is narration over computed facts. Prompting a 7B instruct model plus a hard deterministic boundary gets there without a training pipeline to maintain or a model to re-validate every close. |
+| **LLM-computed numbers** | Every figure in a brief is traceable to SQL over the ledger. A model that can silently change a materiality decision is not auditable, which is the entire point of the workpaper. |
+| **Autonomous action** | No payment is released and no ledger is written by the agent. Both pipelines terminate in a human decision. |
 
 ## Architecture
 
@@ -181,21 +285,47 @@ hosting overrun recurring three months running, an August-only conference
 sponsorship, a churned mid-market customer, a one-off legal fee, and the
 subledger-less Insurance accrual.
 
-## Evaluation and benchmarks — in progress
+## Evaluation — measured
 
-Placeholders, deliberately empty. **No number below is estimated or projected.**
-The harness is being built; these tables get filled in with measured results or
-they get removed.
+**No number here is estimated or projected.** Reproduce with
+`python evals/run_evals.py`; the full scorecard lands in
+[`evals/results/latest.md`](evals/results/latest.md). The run replays all 19
+consecutive period comparisons oldest-first, with `get_llm()` forced to `None`
+so it scores the pipeline rather than model sampling.
 
-**Accuracy scorecard** — against the seeded dataset, where the planted stories
-give a ground-truth answer key: material-variance detection recall and
-precision, top-1 and top-3 driver-attribution accuracy, and the rate at which an
-LLM response fails to parse as JSON and falls through to the deterministic
-template.
+**62 passed · 1 failed · 6 reported · 1 skipped**
 
-**Serving benchmark** — for the Modal vLLM endpoint: cold-start latency, warm
-p50/p95 per call, serial versus batched throughput across a 20-period replay,
-and the effect of prefix caching on the shared system prompt.
+| Measure | Result |
+|---|---|
+| Planted-story detection (recall) | **6 / 6** — every planted story clears the gate and surfaces as a finding, with the expected materiality reason |
+| Driver attribution | **top-1 and top-3 exact on all 6**, including cohort labels (`expansion` / `new` / `churned`) |
+| Planted amounts | exact to the cent (delta, prior, current, pct) |
+| Concentration stats | all **43** notes match an independent recomputation straight from the CSVs |
+| Driver deltas | every one matches the independent recomputation |
+| Subledger tie-out | 100% coverage on all 8 accounts across all 19 periods |
+| Memory correctness | a churned driver never reappears in a later comparison; recurrence flags land on the right periods |
+
+Two results are worth stating plainly rather than burying:
+
+**Precision is 36%, and that number is not yet a verdict.** 9 of 25 findings sit
+on a planted story; the other 16 are movements in a genuinely noised base series
+— a real 12% R&D swing is a real variance, it just wasn't one the generator
+planted. The harness lists all 16 by account and period so the number can be
+reviewed rather than guessed at, and it deliberately **skips** asserting a
+ceiling: `ground_truth.yaml` sets `assert_max_rate: null`, because inventing a
+threshold before measuring one is theatre.
+
+**One failing assertion, left failing.** With more than three drivers that never
+reach 60% cumulative share, the concentration note should be empty; in 2 of 43
+cases it emits one. The cause is that cumulative share is signed, so offsetting
+drivers can pull a cumulative below 60% while a single driver sits above it. The
+assertion and the implementation disagree about what "concentration" should mean
+when drivers offset — a domain decision, so it is recorded as a failure rather
+than quietly resolved by whichever side was easier to change.
+
+**Serving benchmark — not yet measured.** Cold-start latency, warm p50/p95,
+serial versus batched throughput across a replay, and the effect of prefix
+caching on the shared system prompt. This stays empty until it is run.
 
 ## The same pattern, applied to AP
 

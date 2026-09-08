@@ -397,7 +397,7 @@ def invoice_vs_po_chart(invoice_amt, po_amt, tolerance, status):
     )
 
 
-def match_status_chart(rows: pd.DataFrame, attribute_order: list):
+def match_status_chart(rows: pd.DataFrame, attribute_order: list, source_order: list = None):
     """Grid of the three-way match result: one cell per (attribute, source)
     pair, colored by match status.
 
@@ -409,6 +409,13 @@ def match_status_chart(rows: pd.DataFrame, attribute_order: list):
     text color is left unset (themed), same as everywhere else in this
     module.
 
+    `source_order` fixes the column order. A three-way match reads
+    invoice -> purchase order -> bank feed, which is the order the documents
+    are reconciled in; left to itself Vega sorts them alphabetically and puts
+    the bank feed first, which reads as though the payment came before the
+    invoice. Labels are held horizontal for the same reason -- rotated column
+    headers on a three-column grid cost legibility for no space saved.
+
     Returns `None` when `rows` is empty or `None`.
     """
     if rows is None or rows.empty:
@@ -416,9 +423,10 @@ def match_status_chart(rows: pd.DataFrame, attribute_order: list):
     df = rows.copy()
     glyph = {"match": "OK", "mismatch": "X", "not available": "—"}
     df["glyph"] = df["status"].map(glyph)
+    x_sort = source_order if source_order else alt.Undefined
 
     cells = alt.Chart(df).mark_rect().encode(
-        x=alt.X("source:N", title=None),
+        x=alt.X("source:N", title=None, sort=x_sort, axis=alt.Axis(labelAngle=0)),
         y=alt.Y("attribute:N", sort=attribute_order, title=None),
         color=alt.Color(
             "status:N", scale=_MATCH_SCALE, legend=alt.Legend(title=None, orient="bottom")
@@ -430,7 +438,7 @@ def match_status_chart(rows: pd.DataFrame, attribute_order: list):
         ],
     )
     labels = alt.Chart(df).mark_text().encode(
-        x=alt.X("source:N"),
+        x=alt.X("source:N", sort=x_sort),
         y=alt.Y("attribute:N", sort=attribute_order),
         text=alt.Text("glyph:N"),
     )
