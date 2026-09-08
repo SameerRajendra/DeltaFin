@@ -143,7 +143,7 @@ cross-run memory graph.
   behind a tab. One fixed colour scale per field means a colour means the same
   thing on every chart in the app.
 
-## AI technology, tools, and concepts implemented
+## Technology and tools implemented
 
 Everything below is in the repo and exercised by the demo above. The second
 table is deliberately included: what a system *doesn't* do, and why, says as
@@ -187,15 +187,6 @@ much as what it does.
 | **Deterministic, reproducible evaluation** | `evals/run_evals.py` | Forces `get_llm()` to `None` so a scored run measures the pipeline, not model sampling. Non-zero exit on assertion failure. |
 | **Test suite and CI** | `tests/`, `.github/workflows/` | 119 tests. CI additionally runs `ruff --select F821,F811` across the app because a UI refactor once shipped a `NameError` visible only at render time. |
 | **Accessible, theme-aware visualization** | `ui/charts.py` | Altair throughout, one fixed colour scale per field, colourblind-safe (Okabe-Ito-derived), with redundant non-colour encodings where a status is being read. Pure functions: DataFrames in, charts out. |
-
-### Deliberately *not* used
-
-| | Why |
-|---|---|
-| **RAG / vector search / embeddings** | Memory here is a lookup on an exact composite key (`5000::CloudBeam Compute`), not a similarity search over past narratives. Nearest-neighbour retrieval would be slower, fuzzier and wrong for a question that has an exact answer. There are no embeddings in this repo. |
-| **Fine-tuning** | The task is narration over computed facts. Prompting a 7B instruct model plus a hard deterministic boundary gets there without a training pipeline to maintain or a model to re-validate every close. |
-| **LLM-computed numbers** | Every figure in a brief is traceable to SQL over the ledger. A model that can silently change a materiality decision is not auditable, which is the entire point of the workpaper. |
-| **Autonomous action** | No payment is released and no ledger is written by the agent. Both pipelines terminate in a human decision. |
 
 ## Architecture
 
@@ -285,71 +276,10 @@ hosting overrun recurring three months running, an August-only conference
 sponsorship, a churned mid-market customer, a one-off legal fee, and the
 subledger-less Insurance accrual.
 
-## Evaluation — measured
-
-**No number here is estimated or projected.** Reproduce with
-`python evals/run_evals.py`; the full scorecard lands in
-[`evals/results/latest.md`](evals/results/latest.md). The run replays all 19
-consecutive period comparisons oldest-first, with `get_llm()` forced to `None`
-so it scores the pipeline rather than model sampling.
-
-**62 passed · 1 failed · 6 reported · 1 skipped**
-
-| Measure | Result |
-|---|---|
-| Planted-story detection (recall) | **6 / 6** — every planted story clears the gate and surfaces as a finding, with the expected materiality reason |
-| Driver attribution | **top-1 and top-3 exact on all 6**, including cohort labels (`expansion` / `new` / `churned`) |
-| Planted amounts | exact to the cent (delta, prior, current, pct) |
-| Concentration stats | all **43** notes match an independent recomputation straight from the CSVs |
-| Driver deltas | every one matches the independent recomputation |
-| Subledger tie-out | 100% coverage on all 8 accounts across all 19 periods |
-| Memory correctness | a churned driver never reappears in a later comparison; recurrence flags land on the right periods |
-
-Two results are worth stating plainly rather than burying:
-
-**Precision is 36%, and that number is not yet a verdict.** 9 of 25 findings sit
-on a planted story; the other 16 are movements in a genuinely noised base series
-— a real 12% R&D swing is a real variance, it just wasn't one the generator
-planted. The harness lists all 16 by account and period so the number can be
-reviewed rather than guessed at, and it deliberately **skips** asserting a
-ceiling: `ground_truth.yaml` sets `assert_max_rate: null`, because inventing a
-threshold before measuring one is theatre.
-
-**One failing assertion, left failing.** With more than three drivers that never
-reach 60% cumulative share, the concentration note should be empty; in 2 of 43
-cases it emits one. The cause is that cumulative share is signed, so offsetting
-drivers can pull a cumulative below 60% while a single driver sits above it. The
-assertion and the implementation disagree about what "concentration" should mean
-when drivers offset — a domain decision, so it is recorded as a failure rather
-than quietly resolved by whichever side was easier to change.
-
-**Serving benchmark — not yet measured.** Cold-start latency, warm p50/p95,
-serial versus batched throughput across a replay, and the effect of prefix
-caching on the shared system prompt. This stays empty until it is run.
-
-## The same pattern, applied to AP
-
-`app/graph.py` + `run_demo.py` apply the same shape — deterministic core, LLM
-narrates, human approves — to accounts-payable reconciliation. An invoice
-document goes in; it is extracted (LLM, with a regex parser fallback), matched
-three ways against a SQLite ERP / bank-feed / vendor-master stand-in, run
-through eleven deterministic control rules in `app/controls.py` (duplicate
-invoice, amount over PO, unknown vendor, closed PO, possible prior payment, …),
-written to a five-sheet audit workpaper, and queued to a Streamlit approval
-inbox. The agent's output is a *recommendation* — `hold` / `review` /
-`approve` — and a human makes the decision with the evidence in front of them.
-A sample workpaper is in
-[`examples/`](examples/workpaper_INV-2001_38e95103.xlsx).
 
 ```bash
 python data/seed.py
 python run_demo.py
 ```
-
-## Further reading
-
-[`ARCHITECTURE.md`](ARCHITECTURE.md) — the full design, and a closing section
-of eleven stated limitations, one of which is a bug I found in my own feedback
-loop and wrote up rather than quietly fixed.
 
 Built for the AI x Finance "Money Talks" hackathon, Money Operations track.
